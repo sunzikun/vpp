@@ -67,7 +67,7 @@ af_packet_eth_flag_change (vnet_main_t * vnm, vnet_hw_interface_t * hi,
   af_packet_if_t *apif =
     pool_elt_at_index (apm->interfaces, hi->dev_instance);
 
-  if (ETHERNET_INTERFACE_FLAG_MTU == (flags & ETHERNET_INTERFACE_FLAG_MTU))
+  if (flags == ETHERNET_INTERFACE_FLAG_MTU)
     {
       s = format (0, "/sys/class/net/%s/mtu%c", apif->host_if_name, 0);
 
@@ -396,7 +396,7 @@ af_packet_create_if (vlib_main_t * vm, u8 * host_if_name, u8 * hw_addr_set,
 			       VNET_HW_INTERFACE_FLAG_LINK_UP);
 
   vnet_hw_interface_set_rx_mode (vnm, apif->hw_if_index, 0,
-				 VNET_HW_INTERFACE_RX_MODE_INTERRUPT);
+				 VNET_HW_IF_RX_MODE_INTERRUPT);
 
   mhash_set_mem (&apm->if_index_by_host_if_name, host_if_name_dup, &if_index,
 		 0);

@@ -16,6 +16,8 @@
 #include <vnet/tcp/tcp.h>
 #include <vnet/tcp/tcp_inlines.h>
 #include <math.h>
+#include <vnet/ip/ip4_inlines.h>
+#include <vnet/ip/ip6_inlines.h>
 
 typedef enum _tcp_output_next
 {
@@ -120,11 +122,6 @@ tcp_update_rcv_wnd (tcp_connection_t * tc)
    * Figure out how much space we have available
    */
   available_space = transport_max_rx_enqueue (&tc->connection);
-  if (PREDICT_FALSE (available_space < tc->rcv_opts.mss))
-    {
-      tc->rcv_wnd = 0;
-      return;
-    }
 
   /*
    * Use the above and what we know about what we've previously advertised
@@ -132,22 +129,22 @@ tcp_update_rcv_wnd (tcp_connection_t * tc)
    */
   observed_wnd = (i32) tc->rcv_wnd - (tc->rcv_nxt - tc->rcv_las);
 
-  /* Bad. Thou shalt not shrink */
+  /* Check if we are about to retract the window. Do the comparison before
+   * rounding to avoid errors. Per RFC7323 sec. 2.4 we could remove this */
   if (PREDICT_FALSE ((i32) available_space < observed_wnd))
     {
-      wnd = clib_max (observed_wnd, 0);
+      wnd = round_down_pow2 (clib_max (observed_wnd, 0), 1 << tc->rcv_wscale);
       TCP_EVT (TCP_EVT_RCV_WND_SHRUNK, tc, observed_wnd, available_space);
     }
   else
     {
-      wnd = available_space;
+      /* Make sure we have a multiple of 1 << rcv_wscale. We round down to
+       * avoid advertising a window larger than what can be buffered */
+      wnd = round_down_pow2 (available_space, 1 << tc->rcv_wscale);
     }
 
-  /* Make sure we have a multiple of 1 << rcv_wscale. We round up to
-   * avoid advertising a window less than mss which could happen if
-   * 1 << rcv_wscale < mss */
-  if (wnd && tc->rcv_wscale)
-    wnd = round_pow2 (wnd, 1 << tc->rcv_wscale);
+  if (PREDICT_FALSE (wnd < tc->rcv_opts.mss))
+    wnd = 0;
 
   tc->rcv_wnd = clib_min (wnd, TCP_WND_MAX << tc->rcv_wscale);
 }
@@ -669,7 +666,10 @@ tcp_send_reset_w_pkt (tcp_connection_t * tc, vlib_buffer_t * pkt,
   fib_protocol_t fib_proto;
 
   if (PREDICT_FALSE (!vlib_buffer_alloc (vm, &bi, 1)))
-    return;
+    {
+      tcp_worker_stats_inc (wrk, no_buffer, 1);
+      return;
+    }
 
   b = vlib_get_buffer (vm, bi);
   sw_if_index = vnet_buffer (pkt)->sw_if_index[VLIB_RX];
@@ -750,7 +750,10 @@ tcp_send_reset (tcp_connection_t * tc)
   u8 flags;
 
   if (PREDICT_FALSE (!vlib_buffer_alloc (vm, &bi, 1)))
-    return;
+    {
+      tcp_worker_stats_inc (wrk, no_buffer, 1);
+      return;
+    }
   b = vlib_get_buffer (vm, bi);
   tcp_init_buffer (vm, b);
 
@@ -812,6 +815,7 @@ tcp_send_syn (tcp_connection_t * tc)
   if (PREDICT_FALSE (!vlib_buffer_alloc (vm, &bi, 1)))
     {
       tcp_timer_update (&wrk->timer_wheel, tc, TCP_TIMER_RETRANSMIT_SYN, 1);
+      tcp_worker_stats_inc (wrk, no_buffer, 1);
       return;
     }
 
@@ -837,11 +841,13 @@ tcp_send_synack (tcp_connection_t * tc)
   vlib_buffer_t *b;
   u32 bi;
 
-  tcp_retransmit_timer_force_update (&wrk->timer_wheel, tc);
+  ASSERT (tc->snd_una != tc->snd_nxt);
+  tcp_retransmit_timer_update (&wrk->timer_wheel, tc);
 
   if (PREDICT_FALSE (!vlib_buffer_alloc (vm, &bi, 1)))
     {
       tcp_timer_update (&wrk->timer_wheel, tc, TCP_TIMER_RETRANSMIT, 1);
+      tcp_worker_stats_inc (wrk, no_buffer, 1);
       return;
     }
 
@@ -878,6 +884,7 @@ tcp_send_fin (tcp_connection_t * tc)
       else
 	/* Make sure retransmit retries a fin not data */
 	tc->flags |= TCP_CONN_FINSNT;
+      tcp_worker_stats_inc (wrk, no_buffer, 1);
       return;
     }
 
@@ -885,7 +892,6 @@ tcp_send_fin (tcp_connection_t * tc)
   if ((tc->flags & TCP_CONN_SNDACK) && !tc->pending_dupacks)
     tc->flags &= ~TCP_CONN_SNDACK;
 
-  tcp_retransmit_timer_force_update (&wrk->timer_wheel, tc);
   b = vlib_get_buffer (vm, bi);
   tcp_init_buffer (vm, b);
   tcp_make_fin (tc, b);
@@ -893,11 +899,11 @@ tcp_send_fin (tcp_connection_t * tc)
   TCP_EVT (TCP_EVT_FIN_SENT, tc);
   /* Account for the FIN */
   tc->snd_nxt += 1;
+  tcp_retransmit_timer_update (&wrk->timer_wheel, tc);
   if (!fin_snt)
     {
       tc->flags |= TCP_CONN_FINSNT;
       tc->flags &= ~TCP_CONN_FINPNDG;
-      tc->snd_una_max = seq_max (tc->snd_una_max, tc->snd_nxt);
     }
 }
 
@@ -989,8 +995,7 @@ tcp_session_push_header (transport_connection_t * tconn, vlib_buffer_t * b)
   tcp_push_hdr_i (tc, b, tc->snd_nxt, /* compute opts */ 0, /* burst */ 1,
 		  /* update_snd_nxt */ 1);
 
-  tc->snd_una_max = seq_max (tc->snd_nxt, tc->snd_una_max);
-  tcp_validate_txf_size (tc, tc->snd_una_max - tc->snd_una);
+  tcp_validate_txf_size (tc, tc->snd_nxt - tc->snd_una);
   /* If not tracking an ACK, start tracking */
   if (tc->rtt_ts == 0 && !tcp_in_cong_recovery (tc))
     {
@@ -1018,6 +1023,7 @@ tcp_send_ack (tcp_connection_t * tc)
   if (PREDICT_FALSE (!vlib_buffer_alloc (vm, &bi, 1)))
     {
       tcp_update_rcv_wnd (tc);
+      tcp_worker_stats_inc (wrk, no_buffer, 1);
       return;
     }
   b = vlib_get_buffer (vm, bi);
@@ -1056,17 +1062,6 @@ tcp_program_retransmit (tcp_connection_t * tc)
       session_add_self_custom_tx_evt (&tc->connection, 0);
       tc->flags |= TCP_CONN_RXT_PENDING;
     }
-}
-
-/**
- * Delayed ack timer handler
- *
- * Sends delayed ACK when timer expires
- */
-void
-tcp_timer_delack_handler (tcp_connection_t * tc)
-{
-  tcp_send_ack (tc);
 }
 
 /**
@@ -1127,7 +1122,10 @@ tcp_prepare_segment (tcp_worker_ctx_t * wrk, tcp_connection_t * tc,
   if (PREDICT_TRUE (seg_size <= bytes_per_buffer))
     {
       if (PREDICT_FALSE (!vlib_buffer_alloc (vm, &bi, 1)))
-	return 0;
+	{
+	  tcp_worker_stats_inc (wrk, no_buffer, 1);
+	  return 0;
+	}
       *b = vlib_get_buffer (vm, bi);
       data = tcp_init_buffer (vm, *b);
       n_bytes = session_tx_fifo_peek_bytes (&tc->connection, data, offset,
@@ -1154,6 +1152,7 @@ tcp_prepare_segment (tcp_worker_ctx_t * wrk, tcp_connection_t * tc,
 	{
 	  if (n_bufs)
 	    vlib_buffer_free (vm, wrk->tx_buffers, n_bufs);
+	  tcp_worker_stats_inc (wrk, no_buffer, 1);
 	  return 0;
 	}
 
@@ -1292,6 +1291,7 @@ tcp_cc_init_rxt_timeout (tcp_connection_t * tc)
   tc->rtt_ts = 0;
   tc->cwnd_acc_bytes = 0;
   tc->tr_occurences += 1;
+  tc->sack_sb.reorder = TCP_DUPACK_THRESHOLD;
   tcp_recovery_on (tc);
 }
 
@@ -1326,11 +1326,8 @@ tcp_timer_retransmit_handler (tcp_connection_t * tc)
 	  return;
 	}
 
-      /* Shouldn't be here. This condition is tricky because it has to take
-       * into account boff > 0 due to persist timeout. */
-      if ((tc->rto_boff == 0 && tc->snd_una == tc->snd_nxt)
-	  || (tc->rto_boff > 0 && seq_geq (tc->snd_una, tc->snd_congestion)
-	      && !tcp_flight_size (tc)))
+      /* Shouldn't be here */
+      if (tc->snd_una == tc->snd_nxt)
 	{
 	  ASSERT (!tcp_in_recovery (tc));
 	  tc->rto_boff = 0;
@@ -1380,7 +1377,7 @@ tcp_timer_retransmit_handler (tcp_connection_t * tc)
       tcp_enqueue_to_output (wrk, b, bi, tc->c_is_ip4);
 
       tc->rto = clib_min (tc->rto << 1, TCP_RTO_MAX);
-      tcp_retransmit_timer_force_update (&wrk->timer_wheel, tc);
+      tcp_retransmit_timer_update (&wrk->timer_wheel, tc);
 
       tc->rto_boff += 1;
       if (tc->rto_boff == 1)
@@ -1415,6 +1412,7 @@ tcp_timer_retransmit_handler (tcp_connection_t * tc)
       if (PREDICT_FALSE (!vlib_buffer_alloc (vm, &bi, 1)))
 	{
 	  tcp_timer_update (&wrk->timer_wheel, tc, TCP_TIMER_RETRANSMIT, 1);
+	  tcp_worker_stats_inc (wrk, no_buffer, 1);
 	  return;
 	}
 
@@ -1422,7 +1420,8 @@ tcp_timer_retransmit_handler (tcp_connection_t * tc)
       if (tc->rto_boff > TCP_RTO_SYN_RETRIES)
 	tc->rto = clib_min (tc->rto << 1, TCP_RTO_MAX);
 
-      tcp_retransmit_timer_force_update (&wrk->timer_wheel, tc);
+      ASSERT (tc->snd_una != tc->snd_nxt);
+      tcp_retransmit_timer_update (&wrk->timer_wheel, tc);
 
       b = vlib_get_buffer (vm, bi);
       tcp_init_buffer (vm, b);
@@ -1478,6 +1477,7 @@ tcp_timer_retransmit_syn_handler (tcp_connection_t * tc)
   if (PREDICT_FALSE (!vlib_buffer_alloc (vm, &bi, 1)))
     {
       tcp_timer_update (&wrk->timer_wheel, tc, TCP_TIMER_RETRANSMIT_SYN, 1);
+      tcp_worker_stats_inc (wrk, no_buffer, 1);
       return;
     }
 
@@ -1545,6 +1545,7 @@ tcp_timer_persist_handler (tcp_connection_t * tc)
   if (PREDICT_FALSE (!vlib_buffer_alloc (vm, &bi, 1)))
     {
       tcp_persist_timer_set (&wrk->timer_wheel, tc);
+      tcp_worker_stats_inc (wrk, no_buffer, 1);
       return;
     }
 
@@ -1559,7 +1560,7 @@ tcp_timer_persist_handler (tcp_connection_t * tc)
 					max_snd_bytes);
   b->current_length = n_bytes;
   ASSERT (n_bytes != 0 && (tcp_timer_is_active (tc, TCP_TIMER_RETRANSMIT)
-			   || tc->snd_nxt == tc->snd_una_max
+			   || tc->snd_una == tc->snd_nxt
 			   || tc->rto_boff > 1));
 
   if (tc->cfg_flags & TCP_CFG_F_RATE_SAMPLE)
@@ -1570,8 +1571,7 @@ tcp_timer_persist_handler (tcp_connection_t * tc)
 
   tcp_push_hdr_i (tc, b, tc->snd_nxt, /* compute opts */ 0,
 		  /* burst */ 0, /* update_snd_nxt */ 1);
-  tc->snd_una_max = seq_max (tc->snd_nxt, tc->snd_una_max);
-  tcp_validate_txf_size (tc, tc->snd_una_max - tc->snd_una);
+  tcp_validate_txf_size (tc, tc->snd_nxt - tc->snd_una);
   tcp_enqueue_to_output (wrk, b, bi, tc->c_is_ip4);
 
   /* Just sent new data, enable retransmit */
@@ -1637,7 +1637,6 @@ tcp_transmit_unsent (tcp_worker_ctx_t * wrk, tcp_connection_t * tc,
 	tcp_bt_track_tx (tc, n_written);
 
       tc->snd_nxt += n_written;
-      tc->snd_una_max = seq_max (tc->snd_nxt, tc->snd_una_max);
     }
 
 done:

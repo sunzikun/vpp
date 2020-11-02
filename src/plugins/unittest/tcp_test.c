@@ -88,7 +88,6 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
 
   tc->flags |= TCP_CONN_FAST_RECOVERY | TCP_CONN_RECOVERY;
   tc->snd_una = 0;
-  tc->snd_una_max = 1000;
   tc->snd_nxt = 1000;
   tc->rcv_opts.flags |= TCP_OPTS_FLAG_SACK;
   tc->snd_mss = 150;
@@ -317,7 +316,6 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
   block.end = 1300;
   vec_add1 (tc->rcv_opts.sacks, block);
 
-  tc->snd_una_max = 1500;
   tc->snd_una = 1000;
   tc->snd_nxt = 1500;
   tcp_rcv_sacks (tc, 1000);
@@ -366,7 +364,7 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
    */
   vec_reset_length (tc->rcv_opts.sacks);
   tc->snd_una = 1300;
-  tc->snd_nxt = tc->snd_una_max = 1900;
+  tc->snd_nxt = 1900;
   for (i = 0; i < 5; i++)
     {
       block.start = i * 100 + 1200;
@@ -390,7 +388,6 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
    */
 
   tc->snd_una = 0;
-  tc->snd_una_max = 1000;
   tc->snd_nxt = 1000;
   vec_reset_length (tc->rcv_opts.sacks);
   for (i = 0; i < 5; i++)
@@ -434,7 +431,6 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
    */
 
   tc->snd_una = 0;
-  tc->snd_una_max = 1000;
   tc->snd_nxt = 1000;
 
   block.start = 100;
@@ -472,7 +468,6 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
    */
   scoreboard_clear (sb);
   tc->snd_una = 0;
-  tc->snd_una_max = 1000;
   tc->snd_nxt = 1000;
 
   block.start = 500;
@@ -505,7 +500,9 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
 	    sb->last_sacked_bytes);
   TCP_TEST ((sb->last_bytes_delivered == 0), "last bytes delivered %d",
 	    sb->last_bytes_delivered);
+  /* Hole should be split in 2 lost holes that add up to 300 */
   TCP_TEST ((sb->lost_bytes == 300), "lost bytes %u", sb->lost_bytes);
+  TCP_TEST ((sb->reorder == 7), "reorder %u", sb->reorder);
 
   /*
    * Ack [100 300] in two steps
@@ -573,7 +570,7 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
    * snd_una = 1000 and snd_una_max = 1600
    */
   tc->snd_una = 1000;
-  tc->snd_nxt = tc->snd_una_max = 1600;
+  tc->snd_nxt = 1600;
   vec_reset_length (tc->rcv_opts.sacks);
   block.start = 1200;
   block.end = 1500;
@@ -590,7 +587,9 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
 	    sb->last_sacked_bytes);
   TCP_TEST ((sb->last_bytes_delivered == 0), "last bytes delivered %d",
 	    sb->last_bytes_delivered);
-  TCP_TEST ((sb->lost_bytes == 200), "lost bytes %u", sb->lost_bytes);
+  /* No bytes lost because of reorder */
+  TCP_TEST ((sb->lost_bytes == 0), "lost bytes %u", sb->lost_bytes);
+  TCP_TEST ((sb->reorder == 7), "reorder %u", sb->reorder);
   TCP_TEST ((!sb->is_reneging), "is not reneging");
 
   /*
@@ -605,7 +604,6 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
 
   tc->flags |= TCP_CONN_FAST_RECOVERY | TCP_CONN_RECOVERY;
   tc->snd_una = 0;
-  tc->snd_una_max = 1000;
   tc->snd_nxt = 1000;
   sb->high_rxt = 0;
 
@@ -636,6 +634,32 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
   TCP_TEST (sb->is_reneging, "is reneging");
   TCP_TEST ((sb->rxt_sacked == 300), "last rxt sacked bytes %d",
 	    sb->rxt_sacked);
+
+  /*
+   * Restart
+   */
+  scoreboard_clear (sb);
+  vec_reset_length (tc->rcv_opts.sacks);
+
+  /*
+   * Broken sacks:
+   * block.start > snd_nxt
+   * && block.start < blk.end
+   * && block.end <= snd_nxt
+   */
+  tc->flags = 0;
+  block.start = 2147483647;
+  block.end = 4294967295;
+  vec_add1 (tc->rcv_opts.sacks, block);
+  tc->snd_una = tc->snd_nxt = 1969067947;
+
+  tcp_rcv_sacks (tc, tc->snd_una);
+
+  /*
+   * Clear
+   */
+  scoreboard_clear (sb);
+  vec_reset_length (tc->rcv_opts.sacks);
 
   return 0;
 }
@@ -1305,11 +1329,224 @@ tcp_test_delivery (vlib_main_t * vm, unformat_input_t * input)
   return 0;
 }
 
+static int
+tcp_test_bt (vlib_main_t * vm, unformat_input_t * input)
+{
+  u32 thread_index = 0;
+  tcp_rate_sample_t _rs = { 0 }, *rs = &_rs;
+  tcp_connection_t _tc, *tc = &_tc;
+  int __clib_unused verbose = 0, i;
+  tcp_byte_tracker_t *bt;
+  tcp_bt_sample_t *bts;
+  u32 head;
+  sack_block_t *blk;
+
+  /* Init data structures */
+  memset (tc, 0, sizeof (*tc));
+  tcp_bt_init (tc);
+  bt = tc->bt;
+
+  /* 1) track first burst at time 1 */
+  /* [] --> [0:100] */
+  session_main.wrk[thread_index].last_vlib_time = 1;
+  tcp_bt_track_tx (tc, 100);
+  tc->snd_nxt += 100;
+
+  TCP_TEST (tcp_bt_is_sane (bt), "tracker should be sane");
+  TCP_TEST (pool_elts (bt->samples) == 1, "should have 1 sample");
+  bts = pool_elt_at_index (bt->samples, bt->head);
+  head = bt->head;
+  TCP_TEST (bts->min_seq == tc->snd_una, "min seq should be snd_una");
+  TCP_TEST (bts->next == TCP_BTS_INVALID_INDEX, "next should be invalid");
+  TCP_TEST (bts->prev == TCP_BTS_INVALID_INDEX, "prev should be invalid");
+  TCP_TEST (bts->tx_time == 1, "tx time should be 1");
+  TCP_TEST (!(bts->flags & TCP_BTS_IS_RXT), "not retransmitted");
+  TCP_TEST (!(bts->flags & TCP_BTS_IS_SACKED), "not sacked");
+
+  /* 2) track second butst at time 2 */
+  /* --> [0:100][100:200] */
+  session_main.wrk[thread_index].last_vlib_time = 2;
+  tcp_bt_track_tx (tc, 100);
+  tc->snd_nxt += 100;
+
+  TCP_TEST (tcp_bt_is_sane (bt), "tracker should be sane");
+  TCP_TEST (pool_elts (bt->samples) == 2, "should have 2 samples");
+  bts = pool_elt_at_index (bt->samples, bt->head);
+  TCP_TEST (head == bt->head, "head is not updated");
+  TCP_TEST (bts->min_seq == tc->snd_una, "min seq should be snd_una");
+  TCP_TEST (bts->tx_time == 1, "tx time of head should be 1");
+
+  /* 3) acked partially at time 3 */
+  /* ACK:150 */
+  /* --> [150:200] */
+  session_main.wrk[thread_index].last_vlib_time = 3;
+  tc->snd_una = 150;
+  tc->bytes_acked = 150;
+  tc->sack_sb.last_sacked_bytes = 0;
+  tcp_bt_sample_delivery_rate (tc, rs);
+
+  TCP_TEST (tcp_bt_is_sane (bt), "tracker should be sane");
+  TCP_TEST (pool_elts (bt->samples) == 1, "should have 1 sample");
+  TCP_TEST (head != bt->head, "head is updated");
+  head = bt->head;
+  bts = pool_elt_at_index (bt->samples, bt->head);
+  TCP_TEST (bts->min_seq == tc->snd_una, "min seq should be snd_una");
+  TCP_TEST (bts->tx_time == 2, "tx time should be 2");
+
+  /* 4) track another burst at time 4 */
+  /* --> [150:200][200:300] */
+  session_main.wrk[thread_index].last_vlib_time = 4;
+  tcp_bt_track_tx (tc, 100);
+  tc->snd_nxt += 100;
+
+  TCP_TEST (tcp_bt_is_sane (bt), "tracker should be sane");
+  TCP_TEST (pool_elts (bt->samples) == 2, "should have 2 samples");
+  bts = pool_elt_at_index (bt->samples, bt->head);
+  TCP_TEST (head == bt->head, "head is not updated");
+  TCP_TEST (bts->min_seq == tc->snd_una, "min seq should be snd_una");
+  TCP_TEST (bts->tx_time == 2, "tx time of head should be 2");
+
+  /* 5) track another burst at time 5 */
+  /* --> [150:200][200:300][300:400] */
+  session_main.wrk[thread_index].last_vlib_time = 5;
+  tcp_bt_track_tx (tc, 100);
+  tc->snd_nxt += 100;
+
+  TCP_TEST (tcp_bt_is_sane (bt), "tracker should be sane");
+  TCP_TEST (pool_elts (bt->samples) == 3, "should have 3 samples");
+  bts = pool_elt_at_index (bt->samples, bt->head);
+  TCP_TEST (head == bt->head, "head is not updated");
+  TCP_TEST (bts->min_seq == tc->snd_una, "min seq should be snd_una");
+  TCP_TEST (bts->tx_time == 2, "tx time of head should be 2");
+
+  /* 6) acked with SACK option at time 6 */
+  /* ACK:250 + SACK[350:400] */
+  /* --> [250:300][300:350][350:400/sacked] */
+  session_main.wrk[thread_index].last_vlib_time = 6;
+  tc->snd_una = 250;
+  tc->bytes_acked = 100;
+  tc->sack_sb.last_sacked_bytes = 50;
+  vec_add2 (tc->rcv_opts.sacks, blk, 1);
+  blk->start = 350;
+  blk->end = 400;
+  tcp_bt_sample_delivery_rate (tc, rs);
+
+  TCP_TEST (tcp_bt_is_sane (bt), "tracker should be sane");
+  TCP_TEST (pool_elts (bt->samples) == 3, "should have 3 samples");
+  TCP_TEST (head != bt->head, "head is updated");
+  head = bt->head;
+  bts = pool_elt_at_index (bt->samples, bt->head);
+  TCP_TEST (bts->min_seq == tc->snd_una, "min seq should be snd_una");
+  TCP_TEST (bts->tx_time == 4, "tx time of head should be 4");
+  TCP_TEST (!(bts->flags & TCP_BTS_IS_SACKED), "not sacked");
+  bts = pool_elt_at_index (bt->samples, bts->next);
+  TCP_TEST (bts->tx_time == 5, "tx time of next should be 5");
+  TCP_TEST (!(bts->flags & TCP_BTS_IS_SACKED), "not sacked");
+  bts = pool_elt_at_index (bt->samples, bt->tail);
+  TCP_TEST (bts->tx_time == 5, "tx time of tail should be 5");
+  TCP_TEST ((bts->flags & TCP_BTS_IS_SACKED), "sacked");
+
+  /* 7) track another burst at time 7 */
+  /* --> [250:300][300:350][350:400/sacked][400-500] */
+  session_main.wrk[thread_index].last_vlib_time = 7;
+  tcp_bt_track_tx (tc, 100);
+  tc->snd_nxt += 100;
+
+  TCP_TEST (tcp_bt_is_sane (bt), "tracker should be sane");
+  TCP_TEST (pool_elts (bt->samples) == 4, "should have 4 samples");
+  bts = pool_elt_at_index (bt->samples, bt->head);
+  TCP_TEST (head == bt->head, "head is not updated");
+  bts = pool_elt_at_index (bt->samples, bt->head);
+  TCP_TEST (bts->min_seq == tc->snd_una, "min seq should be snd_una");
+  TCP_TEST (bts->tx_time == 4, "tx time of head should be 4");
+  TCP_TEST (!(bts->flags & TCP_BTS_IS_SACKED), "not sacked");
+  bts = pool_elt_at_index (bt->samples, bts->next);
+  TCP_TEST (bts->tx_time == 5, "tx time of next should be 5");
+  TCP_TEST (!(bts->flags & TCP_BTS_IS_SACKED), "not sacked");
+  bts = pool_elt_at_index (bt->samples, bts->next);
+  TCP_TEST (bts->tx_time == 5, "tx time of next should be 5");
+  TCP_TEST ((bts->flags & TCP_BTS_IS_SACKED), "sacked");
+  bts = pool_elt_at_index (bt->samples, bt->tail);
+  TCP_TEST (bts->tx_time == 7, "tx time of tail should be 7");
+  TCP_TEST (!(bts->flags & TCP_BTS_IS_SACKED), "not sacked");
+
+  /* 8) retransmit lost one at time 8 */
+  /* retransmit [250:300] */
+  /* --> [250:300][300:350][350:400/sacked][400-500] */
+  session_main.wrk[thread_index].last_vlib_time = 8;
+  tcp_bt_track_rxt (tc, 250, 300);
+  tcp_bt_sample_delivery_rate (tc, rs);
+
+  TCP_TEST (tcp_bt_is_sane (bt), "tracker should be sane");
+  TCP_TEST (pool_elts (bt->samples) == 4, "should have 4 samples");
+  TCP_TEST (head == bt->head, "head is not updated");
+  bts = pool_elt_at_index (bt->samples, bt->head);
+  TCP_TEST (bts->min_seq == tc->snd_una, "min seq should be snd_una");
+  TCP_TEST (bts->tx_time == 8, "tx time of head should be 8");
+  bts = pool_elt_at_index (bt->samples, bts->next);
+  TCP_TEST (bts->tx_time == 5, "tx time of next should be 5");
+  TCP_TEST (!(bts->flags & TCP_BTS_IS_SACKED), "not sacked");
+  bts = pool_elt_at_index (bt->samples, bts->next);
+  TCP_TEST (bts->tx_time == 5, "tx time of next should be 5");
+  TCP_TEST ((bts->flags & TCP_BTS_IS_SACKED), "sacked");
+  bts = pool_elt_at_index (bt->samples, bt->tail);
+  TCP_TEST (bts->tx_time == 7, "tx time of tail should be 7");
+  TCP_TEST (!(bts->flags & TCP_BTS_IS_SACKED), "not sacked");
+
+  /* 9) acked with SACK option at time 9 */
+  /* ACK:350 + SACK[420:450] */
+  /* --> [400:420][420:450/sacked][450:400] */
+  session_main.wrk[thread_index].last_vlib_time = 6;
+  tc->snd_una = 400;
+  tc->bytes_acked = 150;
+  tc->sack_sb.last_sacked_bytes = 30;
+  vec_add2 (tc->rcv_opts.sacks, blk, 1);
+  blk->start = 420;
+  blk->end = 450;
+  tcp_bt_sample_delivery_rate (tc, rs);
+
+  TCP_TEST (tcp_bt_is_sane (bt), "tracker should be sane");
+  TCP_TEST (pool_elts (bt->samples) == 3, "should have 3 samples");
+  TCP_TEST (head != bt->head, "head is updated");
+  head = bt->head;
+  bts = pool_elt_at_index (bt->samples, bt->head);
+  TCP_TEST (bts->min_seq == tc->snd_una, "min seq should be snd_una");
+  TCP_TEST (bts->min_seq == 400 && bts->max_seq == 420, "bts [400:420]");
+  TCP_TEST (bts->tx_time == 7, "tx time of head should be 7");
+  TCP_TEST (!(bts->flags & TCP_BTS_IS_SACKED), "not sacked");
+  bts = pool_elt_at_index (bt->samples, bts->next);
+  TCP_TEST (bts->min_seq == 420 && bts->max_seq == 450, "bts [420:450]");
+  TCP_TEST (bts->tx_time == 7, "tx time of head should be 7");
+  TCP_TEST ((bts->flags & TCP_BTS_IS_SACKED), "sacked");
+  bts = pool_elt_at_index (bt->samples, bts->next);
+  TCP_TEST (bts->min_seq == 450 && bts->max_seq == 500, "bts [450:500]");
+  TCP_TEST (bts->tx_time == 7, "tx time of head should be 7");
+  TCP_TEST (!(bts->flags & TCP_BTS_IS_SACKED), "not sacked");
+
+  /* 10) acked partially at time 10 */
+  /* ACK:500 */
+  /* --> [] */
+  session_main.wrk[thread_index].last_vlib_time = 3;
+  tc->snd_una = 500;
+  tc->bytes_acked = 100;
+  tc->sack_sb.last_sacked_bytes = 0;
+  tcp_bt_sample_delivery_rate (tc, rs);
+
+  TCP_TEST (tcp_bt_is_sane (bt), "tracker should be sane");
+  TCP_TEST (pool_elts (bt->samples) == 0, "should have 0 samples");
+  TCP_TEST (bt->head == TCP_BTS_INVALID_INDEX, "bt->head is invalidated");
+  TCP_TEST (tc->snd_una == tc->snd_nxt, "snd_una == snd_nxt");
+
+  return 0;
+}
+
 static clib_error_t *
 tcp_test (vlib_main_t * vm,
 	  unformat_input_t * input, vlib_cli_command_t * cmd_arg)
 {
   int res = 0;
+
+  vnet_session_enable_disable (vm, 1);
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
@@ -1328,6 +1565,10 @@ tcp_test (vlib_main_t * vm,
       else if (unformat (input, "delivery"))
 	{
 	  res = tcp_test_delivery (vm, input);
+	}
+      else if (unformat (input, "bt"))
+	{
+	  res = tcp_test_bt (vm, input);
 	}
       else if (unformat (input, "all"))
 	{

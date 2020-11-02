@@ -493,17 +493,17 @@ application_alloc_and_init (app_init_args_t * a)
   /*
    * Make sure we support the requested configuration
    */
-  if (!(options[APP_OPTIONS_FLAGS] & APP_OPTIONS_FLAGS_IS_BUILTIN))
+  if (options[APP_OPTIONS_FLAGS] & APP_OPTIONS_FLAGS_IS_BUILTIN)
+    {
+      seg_type = SSVM_SEGMENT_PRIVATE;
+    }
+  else if (!a->use_sock_api)
     {
       reg = vl_api_client_index_to_registration (a->api_client_index);
       if (!reg)
 	return VNET_API_ERROR_APP_UNSUPPORTED_CFG;
       if (vl_api_registration_file_index (reg) == VL_API_INVALID_FI)
 	seg_type = SSVM_SEGMENT_SHM;
-    }
-  else
-    {
-      seg_type = SSVM_SEGMENT_PRIVATE;
     }
 
   if ((options[APP_OPTIONS_FLAGS] & APP_OPTIONS_FLAGS_EVT_MQ_USE_EVENTFD)
@@ -711,7 +711,7 @@ application_alloc_worker_and_init (application_t * app, app_worker_t ** wrk)
   sm = segment_manager_alloc ();
   sm->app_wrk_index = app_wrk->wrk_index;
 
-  if ((rv = segment_manager_init (sm)))
+  if ((rv = segment_manager_init_first (sm)))
     {
       app_worker_free (app_wrk);
       return rv;
@@ -845,16 +845,21 @@ vnet_application_attach (vnet_app_attach_args_t * a)
   if (app)
     return VNET_API_ERROR_APP_ALREADY_ATTACHED;
 
-  if (a->api_client_index != APP_INVALID_INDEX)
+  /* Socket api sets the name and validates namespace prior to attach */
+  if (!a->use_sock_api)
     {
-      app_name = app_name_from_api_index (a->api_client_index);
-      a->name = app_name;
-    }
+      if (a->api_client_index != APP_INVALID_INDEX)
+	{
+	  app_name = app_name_from_api_index (a->api_client_index);
+	  a->name = app_name;
+	}
 
-  secret = a->options[APP_OPTIONS_NAMESPACE_SECRET];
-  if ((rv = app_validate_namespace (a->namespace_id, secret, &app_ns_index)))
-    return rv;
-  a->options[APP_OPTIONS_NAMESPACE] = app_ns_index;
+      secret = a->options[APP_OPTIONS_NAMESPACE_SECRET];
+      if ((rv =
+	   app_validate_namespace (a->namespace_id, secret, &app_ns_index)))
+	return rv;
+      a->options[APP_OPTIONS_NAMESPACE] = app_ns_index;
+    }
 
   if ((rv = application_alloc_and_init ((app_init_args_t *) a)))
     return rv;
@@ -869,7 +874,12 @@ vnet_application_attach (vnet_app_attach_args_t * a)
   fs = segment_manager_get_segment_w_lock (sm, 0);
 
   if (application_is_proxy (app))
-    application_setup_proxy (app);
+    {
+      application_setup_proxy (app);
+      /* The segment manager pool is reallocated because a new listener
+       * is added. Re-grab segment manager to avoid dangling reference */
+      sm = segment_manager_get (app_wrk->first_segment_manager);
+    }
 
   ASSERT (vec_len (fs->ssvm.name) <= 128);
   a->segment = &fs->ssvm;
@@ -1476,7 +1486,7 @@ format_application (u8 * s, va_list * args)
   props = application_segment_manager_properties (app);
   if (!verbose)
     {
-      s = format (s, "%-10u%-20v%-40s", app->app_index, app_name,
+      s = format (s, "%-10u%-20v%-40v", app->app_index, app_name,
 		  app_ns_name);
       return s;
     }
@@ -1753,6 +1763,7 @@ application_init (vlib_main_t * vm)
   /* Add a certificate with index 0 to support legacy apis */
   (void) app_cert_key_pair_alloc ();
   app_main.last_crypto_engine = CRYPTO_ENGINE_LAST;
+  app_main.app_by_name = hash_create_vec (0, sizeof (u8), sizeof (uword));
   return 0;
 }
 

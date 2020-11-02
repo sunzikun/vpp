@@ -17,6 +17,7 @@
  */
 #include <vnet/ipfix-export/flow_report.h>
 #include <vnet/api_errno.h>
+#include <vnet/udp/udp.h>
 
 flow_report_main_t flow_report_main;
 
@@ -500,7 +501,8 @@ set_ipfix_exporter_command_fn (vlib_main_t * vm,
     {
       if (unformat (input, "collector %U", unformat_ip4_address, &collector))
 	;
-      else if (unformat (input, "port %u", &collector_port))
+      else if (unformat (input, "port %U", unformat_udp_port,
+			 &collector_port))
 	;
       else if (unformat (input, "src %U", unformat_ip4_address, &src))
 	;

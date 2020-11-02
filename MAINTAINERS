@@ -60,12 +60,22 @@ M:	Dave Barach <dave@barachs.net>
 M:	Damjan Marion <damarion@cisco.com>
 F:	src/vlib/
 E:	src/vlib/buffer*.[ch]
+E:	src/vlib/pci/
+E:	src/vlib/linux/pci.[ch]
+E:	src/vlib/linux/vfio.[ch]
 
 Vector Library - Buffer Management
 I:	buffers
 M:	Damjan Marion <damarion@cisco.com>
 M:	Dave Barach <dave@barachs.net>
 F:	src/vlib/buffer*.[ch]
+
+Vector Library - PCI
+I:	pci
+M:	Damjan Marion <damarion@cisco.com>
+F:	src/vlib/pci/
+F:	src/vlib/linux/pci.[ch]
+F:	src/vlib/linux/vfio.[ch]
 
 Binary API Libraries
 I:	api
@@ -180,11 +190,6 @@ M:	Damjan Marion <damarion@cisco.com>
 M:	Neale Ranns <nranns@cisco.com>
 F:	src/vnet/crypto/
 
-VNET COP
-I:	cop
-M:	Dave Barach <dave@barachs.net>
-F:	src/vnet/cop/
-
 VNET TEIB
 I:	teib
 M:	Neale Ranns <nranns@cisco.com>
@@ -195,17 +200,17 @@ I:	span
 M:	N/A
 F:	src/vnet/span
 
-Crypto native Plugin
+Plugin - Crypto - native
 I:	crypto-native
 M:	Damjan Marion <damarion@cisco.com>
 F:	src/plugins/crypto_native/
 
-Crypto openssl Plugin
+Plugin - Crypto - OpenSSL
 I:	crypto-openssl
 M:	Damjan Marion <damarion@cisco.com>
 F:	src/plugins/crypto_openssl/
 
-Crypto ipsecmb Plugin
+Plugin - Crypto - ipsecmb
 I:	crypto-ipsecmb
 M:	Neale Ranns <nranns@cisco.com>
 F:	src/plugins/crypto_ipsecmb/
@@ -348,10 +353,21 @@ I:	classify
 M:	N/A
 F:	src/vnet/classify/
 
+VPP Main App
+I:	vpp
+M:	Dave Barach <dave@barachs.net>
+M:	Damjan Marion <damarion@cisco.com>
+F:	src/vpp/
+
 Plugin - Access Control List (ACL) Based Forwarding
 I:	abf
 M:	Neale Ranns <nranns@cisco.com>
 F:	src/plugins/abf/
+
+Plugin - Allow / Deny List
+I:	adl
+M:	Dave Barach <dave@barachs.net>
+F:	src/plugins/adl/
 
 Plugin - Simple DNS name resolver
 I:	dns
@@ -419,6 +435,8 @@ Plugin - Internet Key Exchange (IKEv2) Protocol
 I:	ikev2
 M:	Damjan Marion <damarion@cisco.com>
 M:	Neale Ranns <nranns@cisco.com>
+M:	Filip Tehlar <ftehlar@cisco.com>
+M:	Benoît Ganne <bganne@cisco.com>
 F:	src/plugins/ikev2/
 
 Plugin - Internet Group Management Protocol (IGMP)
@@ -610,12 +628,6 @@ M:	Ole Troan <ot@cisco.com>
 F:	src/vpp/stats/
 F:	src/vpp-api/client/stat_client.[ch]
 
-VPP Object Model
-I:	vom
-M:	Neale Ranns <nranns@cisco.com>
-M:	Mohsin Kazmi <sykazmi@cisco.com>
-F:	extras/vom/vom/
-
 Plugin - Host Stack Applications
 I:	hsa
 M:	Florin Coras <fcoras@cisco.com>
@@ -670,6 +682,17 @@ I:	urpf
 M:	Neale Ranns <nranns@cisco.com>
 F:	src/plugins/urpf
 
+Plugin - CNat
+I:	cnat
+M:	Nathan Skrzypczak <nathan.skrzypczak@gmail.com>
+M:	Neale Ranns <nranns@cisco.com>
+F:	src/plugins/cnat
+
+Plugin - Wireguard
+I:	wireguard
+M:	Artem Glazychev <artem.glazychev@xored.com>
+F:	src/plugins/wireguard
+
 VPP Config Tooling
 I:	vpp_config
 M:	John DeNisco <jdenisco@cisco.com>
@@ -679,6 +702,17 @@ bash functions
 I:	bash
 M:	Dave Wallace <dwallacelf@gmail.com>
 F:	extras/bash/
+
+Plugin - AF_XDP driver
+I:	af_xdp
+M:	Benoît Ganne <bganne@cisco.com>
+M:	Damjan Marion <damarion@cisco.com>
+F:	src/plugins/af_xdp/
+
+Plugin - geneve
+I:	geneve
+M:	community vpp-dev@lists.fd.io
+F:	src/plugins/geneve/
 
 THE REST
 I:	misc

@@ -93,8 +93,8 @@ unsetup_signal_handlers (int sig)
     dangerous to vec_resize it when crashing, mheap itself might have been
     corrupted already */
 static u8 *syslog_msg = 0;
-static int last_signum = 0;
-static uword last_faulting_address = 0;
+int vlib_last_signum = 0;
+uword vlib_last_faulting_address = 0;
 
 static void
 unix_signal_handler (int signum, siginfo_t * si, ucontext_t * uc)
@@ -102,8 +102,8 @@ unix_signal_handler (int signum, siginfo_t * si, ucontext_t * uc)
   uword fatal = 0;
 
   /* These come in handy when looking at core files from optimized images */
-  last_signum = signum;
-  last_faulting_address = (uword) si->si_addr;
+  vlib_last_signum = signum;
+  vlib_last_faulting_address = (uword) si->si_addr;
 
   syslog_msg = format (syslog_msg, "received signal %U, PC %U",
 		       format_signal, signum, format_ucontext_pc, uc);
@@ -180,8 +180,8 @@ unix_signal_handler (int signum, siginfo_t * si, ucontext_t * uc)
       /* have to remove SIGABRT to avoid recursive - os_exit calling abort() */
       unsetup_signal_handlers (SIGABRT);
 
-      /* os_exit(1) causes core generation, do not do this for SIGINT */
-      if (signum == SIGINT)
+      /* os_exit(1) causes core generation, skip that for SIGINT, SIGHUP */
+      if (signum == SIGINT || signum == SIGHUP)
 	os_exit (0);
       else
 	os_exit (1);
@@ -402,6 +402,10 @@ unix_config (vlib_main_t * vm, unformat_input_t * input)
 	um->flags |= UNIX_FLAG_NODAEMON;
       else if (unformat (input, "nosyslog"))
 	um->flags |= UNIX_FLAG_NOSYSLOG;
+      else if (unformat (input, "nocolor"))
+	um->flags |= UNIX_FLAG_NOCOLOR;
+      else if (unformat (input, "nobanner"))
+	um->flags |= UNIX_FLAG_NOBANNER;
       else if (unformat (input, "cli-prompt %s", &cli_prompt))
 	vlib_unix_cli_set_prompt (cli_prompt);
       else
@@ -576,6 +580,12 @@ unix_config (vlib_main_t * vm, unformat_input_t * input)
  * when invoking VPP applications from a process monitor which
  * pipe stdout/stderr to a dedicated logger service.
  *
+ * @cfgcmd{nocolor}
+ * Do not use colors in outputs.
+ * *
+ * @cfgcmd{nobanner}
+ * Do not display startup banner.
+ *
  * @cfgcmd{exec, &lt;filename&gt;}
  * @par <code>startup-config &lt;filename&gt;</code>
  * Read startup operational configuration from @c filename.
@@ -654,6 +664,8 @@ thread0 (uword arg)
   unformat_input_t input;
   int i;
 
+  vlib_process_finish_switch_stack (vm);
+
   unformat_init_command_line (&input, (char **) vm->argv);
   i = vlib_main (vm, &input);
   unformat_free (&input);
@@ -664,18 +676,17 @@ thread0 (uword arg)
 u8 *
 vlib_thread_stack_init (uword thread_index)
 {
+  void *stack;
   ASSERT (thread_index < vec_len (vlib_thread_stacks));
-  vlib_thread_stacks[thread_index] = clib_mem_alloc_aligned
-    (VLIB_THREAD_STACK_SIZE, clib_mem_get_page_size ());
+  stack = clib_mem_vm_map_stack (VLIB_THREAD_STACK_SIZE,
+				 CLIB_MEM_PAGE_SZ_DEFAULT,
+				 "thread stack: thread %u", thread_index);
 
-  /*
-   * Disallow writes to the bottom page of the stack, to
-   * catch stack overflows.
-   */
-  if (mprotect (vlib_thread_stacks[thread_index],
-		clib_mem_get_page_size (), PROT_READ) < 0)
-    clib_unix_warning ("thread stack");
-  return vlib_thread_stacks[thread_index];
+  if (stack == CLIB_MEM_VM_MAP_FAILED)
+    clib_panic ("failed to allocate thread %u stack", thread_index);
+
+  vlib_thread_stacks[thread_index] = stack;
+  return stack;
 }
 
 int
@@ -727,6 +738,7 @@ vlib_unix_main (int argc, char *argv[])
   __os_thread_index = 0;
   vm->thread_index = 0;
 
+  vlib_process_start_switch_stack (vm, 0);
   i = clib_calljmp (thread0, (uword) vm,
 		    (void *) (vlib_thread_stacks[0] +
 			      VLIB_THREAD_STACK_SIZE));

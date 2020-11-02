@@ -38,6 +38,7 @@
 #ifndef included_clib_h
 #define included_clib_h
 
+#include <stddef.h>
 #include <vppinfra/config.h>
 
 #ifdef  __x86_64__
@@ -66,8 +67,8 @@
 #define ARRAY_LEN(x)	(sizeof (x)/sizeof (x[0]))
 
 #define _STRUCT_FIELD(t,f) (((t *) 0)->f)
-#define STRUCT_OFFSET_OF(t,f) ((uword) & _STRUCT_FIELD (t, f))
-#define STRUCT_BIT_OFFSET_OF(t,f) (BITS(u8) * (uword) & _STRUCT_FIELD (t, f))
+#define STRUCT_OFFSET_OF(t,f) offsetof(t, f)
+#define STRUCT_BIT_OFFSET_OF(t,f) (BITS(u8) * STRUCT_OFFSET_OF (t, f))
 #define STRUCT_SIZE_OF(t,f)   (sizeof (_STRUCT_FIELD (t, f)))
 #define STRUCT_BITS_OF(t,f)   (BITS (_STRUCT_FIELD (t, f)))
 #define STRUCT_ARRAY_LEN(t,f) ARRAY_LEN (_STRUCT_FIELD (t, f))
@@ -98,6 +99,8 @@
 #define __clib_noinline __attribute__ ((noinline))
 #define __clib_aligned(x) __attribute__ ((aligned(x)))
 #define __clib_section(s) __attribute__ ((section(s)))
+#define __clib_warn_unused_result __attribute__ ((warn_unused_result))
+#define __clib_export __attribute__ ((visibility("default")))
 
 #define never_inline __attribute__ ((__noinline__))
 
@@ -250,6 +253,12 @@ always_inline uword
 is_pow2 (uword x)
 {
   return 0 == (x & (x - 1));
+}
+
+always_inline uword
+round_down_pow2 (uword x, uword pow2)
+{
+  return (x) & ~(pow2 - 1);
 }
 
 always_inline uword

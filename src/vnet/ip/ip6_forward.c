@@ -55,6 +55,7 @@
 #include <vppinfra/bihash_template.c>
 #endif
 #include <vnet/ip/ip6_forward.h>
+#include <vnet/ipsec/ipsec_tun.h>
 #include <vnet/interface_output.h>
 
 /* Flag used by IOAM code. Classifier sets it pop-hop-by-hop checks it */
@@ -239,6 +240,8 @@ void
 ip6_sw_interface_enable_disable (u32 sw_if_index, u32 is_enable)
 {
   ip6_main_t *im = &ip6_main;
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_hw_interface_t *hi = vnet_get_sup_hw_interface (vnm, sw_if_index);
 
   vec_validate_init_empty (im->ip_enabled_by_sw_if_index, sw_if_index, 0);
 
@@ -264,6 +267,11 @@ ip6_sw_interface_enable_disable (u32 sw_if_index, u32 is_enable)
 
   vnet_feature_enable_disable ("ip6-multicast", "ip6-not-enabled",
 			       sw_if_index, !is_enable, 0, 0);
+
+  if (is_enable)
+    hi->l3_if_count++;
+  else if (hi->l3_if_count)
+    hi->l3_if_count--;
 }
 
 /* get first interface address */
@@ -1929,11 +1937,9 @@ ip6_rewrite_inline_with_gso (vlib_main_t * vm,
 	      /* before we paint on the next header, update the L4
 	       * checksums if required, since there's no offload on a tunnel */
 	      vnet_calc_checksums_inline (vm, p0, 0 /* is_ip4 */ ,
-					  1 /* is_ip6 */ ,
-					  0 /* with gso */ );
+					  1 /* is_ip6 */ );
 	      vnet_calc_checksums_inline (vm, p1, 0 /* is_ip4 */ ,
-					  1 /* is_ip6 */ ,
-					  0 /* with gso */ );
+					  1 /* is_ip6 */ );
 
 	      /* Guess we are only writing on ipv6 header. */
 	      vnet_rewrite_two_headers (adj0[0], adj1[0],
@@ -2029,8 +2035,7 @@ ip6_rewrite_inline_with_gso (vlib_main_t * vm,
 	  if (is_midchain)
 	    {
 	      vnet_calc_checksums_inline (vm, p0, 0 /* is_ip4 */ ,
-					  1 /* is_ip6 */ ,
-					  0 /* with gso */ );
+					  1 /* is_ip6 */ );
 
 	      /* Guess we are only writing on ip6 header. */
 	      vnet_rewrite_one_header (adj0[0], ip0, sizeof (ip6_header_t));
@@ -2804,24 +2809,6 @@ ip6_lookup_init (vlib_main_t * vm)
 
   ip_lookup_init (&im->lookup_main, /* is_ip6 */ 1);
 
-  if (im->lookup_table_nbuckets == 0)
-    im->lookup_table_nbuckets = IP6_FIB_DEFAULT_HASH_NUM_BUCKETS;
-
-  im->lookup_table_nbuckets = 1 << max_log2 (im->lookup_table_nbuckets);
-
-  if (im->lookup_table_size == 0)
-    im->lookup_table_size = IP6_FIB_DEFAULT_HASH_MEMORY_SIZE;
-
-  clib_bihash_init_24_8 (&(im->ip6_table[IP6_FIB_TABLE_FWDING].ip6_hash),
-			 "ip6 FIB fwding table",
-			 im->lookup_table_nbuckets, im->lookup_table_size);
-  clib_bihash_init_24_8 (&im->ip6_table[IP6_FIB_TABLE_NON_FWDING].ip6_hash,
-			 "ip6 FIB non-fwding table",
-			 im->lookup_table_nbuckets, im->lookup_table_size);
-  clib_bihash_init_40_8 (&im->ip6_mtable.ip6_mhash,
-			 "ip6 mFIB table",
-			 im->lookup_table_nbuckets, im->lookup_table_size);
-
   /* Create FIB with index 0 and table id of 0. */
   fib_table_find_or_create_and_lock (FIB_PROTOCOL_IP6, 0,
 				     FIB_SOURCE_DEFAULT_ROUTE);
@@ -3160,34 +3147,6 @@ VLIB_CLI_COMMAND (set_ip6_classify_command, static) =
   .function = set_ip6_classify_command_fn,
 };
 /* *INDENT-ON* */
-
-static clib_error_t *
-ip6_config (vlib_main_t * vm, unformat_input_t * input)
-{
-  ip6_main_t *im = &ip6_main;
-  uword heapsize = 0;
-  u32 tmp;
-  u32 nbuckets = 0;
-
-  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
-    {
-      if (unformat (input, "hash-buckets %d", &tmp))
-	nbuckets = tmp;
-      else if (unformat (input, "heap-size %U",
-			 unformat_memory_size, &heapsize))
-	;
-      else
-	return clib_error_return (0, "unknown input '%U'",
-				  format_unformat_error, input);
-    }
-
-  im->lookup_table_nbuckets = nbuckets;
-  im->lookup_table_size = heapsize;
-
-  return 0;
-}
-
-VLIB_EARLY_CONFIG_FUNCTION (ip6_config, "ip6");
 
 /*
  * fd.io coding-style-patch-verification: ON

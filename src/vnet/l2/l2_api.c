@@ -115,7 +115,7 @@ vl_api_l2_xconnect_dump_t_handler (vl_api_l2_xconnect_dump_t * mp)
   pool_foreach (swif, im->sw_interfaces,
   ({
     config = vec_elt_at_index (l2im->configs, swif->sw_if_index);
-    if (config->xconnect)
+    if (l2_input_is_xconnect(config))
       send_l2_xconnect_details (reg, mp->context, swif->sw_if_index,
                                 config->output_sw_if_index);
   }));
@@ -236,7 +236,7 @@ vl_api_l2fib_add_del_t_handler (vl_api_l2fib_add_del_t * mp)
 	    {
 	      l2_input_config_t *config;
 	      config = vec_elt_at_index (l2im->configs, sw_if_index);
-	      if (config->bridge == 0)
+	      if (!l2_input_is_bridge (config))
 		{
 		  rv = VNET_API_ERROR_INVALID_SW_IF_INDEX;
 		  goto bad_sw_if_index;
@@ -544,7 +544,7 @@ vl_api_bridge_domain_dump_t_handler (vl_api_bridge_domain_dump_t * mp)
     {
       l2_bridge_domain_t *bd_config =
 	l2input_bd_config_from_index (l2im, bd_index);
-      /* skip dummy bd_id 0 */
+      /* skip placeholder bd_id 0 */
       if (bd_config && (bd_config->bd_id > 0))
 	send_bridge_domain_details (l2im, reg, bd_config,
 				    vec_len (bd_config->members),

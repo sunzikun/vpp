@@ -1,8 +1,10 @@
 # Release Notes    {#release_notes}
 
 * @subpage release_notes_2009
+* @subpage release_notes_20051
 * @subpage release_notes_2005
 * @subpage release_notes_2001
+* @subpage release_notes_19083
 * @subpage release_notes_19082
 * @subpage release_notes_19081
 * @subpage release_notes_1908
@@ -28,13 +30,1414 @@
 * @subpage release_notes_1609
 * @subpage release_notes_1606
 
-@page release_notes_2005 Release notes for VPP 20.09
+@page release_notes_2009 Release notes for VPP 20.09
 
-TBD
+More than 458 commits since the previous release, including 266 fixes.
+
+## Release Highlights
+
+The FD.io VPP 20.09 release added a number of notable new features. In plugins,
+the I/O layer added support for the Linux AF\_XDP interface with the AF\_XDP
+plugin. New plugins where added supporting both the Wireguard security protocol
+and CNAT destination based address translation, and the existing IKEv2 plugin
+added support for NAT-T. In the cryptography layer, support was added for
+synchronous software crypto engines, enabling users to allocate dedicated crypto
+worker threads. The flow layer added support for steering IPSEC ESP/AH flows to
+worker threads. GRO support was added to the packet coalescing library.
+
+This release introduces the new FD.io VPP API change policy to ensure
+backwards-compatibility. The policy will ensure seamless upgrades to new
+versions of FD.io VPP in future, provided no "in-progress" or deprecated APIs
+are in use. Enabling the FD.io community to enjoy the benefits of new releases,
+while minimizing the work involved in staying current.
+
+If you dive into the implementation, you will note that policy in action. A
+number of modified API messages have had their original versions maintained to
+ensure compatibility.
+
+Reflecting the new policy we added two new sections to the release notes
+describing:
+- Newly deprecated API messages: please note that if you are using a deprecated
+message, they will soon be removed in a subsequent release. Collaborate with
+the feature maintainer on the best approach to mitigate.
+- In-progress API messages: They are work-in-progress, and are *not* subject to
+the policy, and may change or even be removed at any time. Please collaborate
+with the feature maintainer on plans to productize the message before using in
+any product. In-progress APIs must eventually become stable or be removed.
+
+## Features
+
+- VNET
+  - Crypto Infra
+    - Add chacha20-poly1305 algo (61f49aa38)
+    - Asynchronous crypto engines (2284817ea)
+    - Add asynchronous crypto APIs (0c936b147)
+    - Added support for optimized cryptodev API (ef80ad6bf)
+  - FLOW
+    - Added ability to steer IPSec ESP/AH flows to worker threads (d4c3666b9)
+    - Added the vnet/flow API (d0236f725)
+  - GENEVE
+    - Support geneve interface acting as a bvi (7fc88cf3a)
+  - GSO
+    - Added software GRO support (f382b06fe)
+  - IPSec
+    - Dedicated IPSec interface type (dd4ccf262)
+    - Deprecate old interface API (e6df80de4)
+  - Interface Common
+    - Support configuring RSS steering queues (c4665093c)
+  - Native Virtio Drivers
+    - Add vhost sw\_if\_index filter for sw\_interface\_vhost\_user\_dump (a0e8d9669)
+    - Add modern device support (379aac395)
+    - Add virtio 1.1 api flags (518251bc8)
+  - TAP Drivers
+    - Add gro support (9e2a78564)
+    - Add virtio 1.1 API flag (50bd16559)
+  - TCP
+    - Track reorder with selective acknowledgments (cc4d6d022)
+- Plugins
+  - AF\_XDP driver
+    - New plugin for Linux AF\_XDP input (4a76d6f6d)
+  - CNat
+    - New plugin for destination based NAT (29f3c7d2e)
+  - Wireguard
+    - New plugin, initial implementation of wireguard protocol (edca1325c)
+  - Crypto - OpenSSL
+    - Add chacha20-poly1305 support to crypto-openssl (1b6ed022e)
+  - DPDK
+    - Device\_id sorted order for cryptodev (5a849e3b3)
+    - Call the meson-based build instead of Makefiles (73903d7e8)
+  - Internet Key Exchange (IKEv2) Protocol
+    - Add support for NAT traversal (NAT-T) (4362baa33)
+    - Add profile dump API (6a9bd8188)
+    - Add support for AES-GCM cipher in IKE (a7b963df2)
+    - Add SA dump API (a340fe1ac)
+  - Network Delay Simulator
+    - Basic reorder support (e6c3e8f0e)
+- VPP Comms Library
+  - Nest vcl\_mq\_epfd to support epoll\_wait without high CPU usage (4266d4d5f)
+  - Support connected udp listens (1e96617d9)
+  - Support inter worker rpc (40c07ce7a)
+  - Support multi-threads with session migration (a3a489691)
+- Vector Library
+  - Add recursive macro expander to debug cli (961e3c842)
+- Binary API Libraries
+  - Add new stream message convention (f5db3711b)
+  - Make VPP api handlers endian independent (e796a1873)
+- Infrastructure Library
+  - Multiarch support for OCTEONTX2 SoC (e2f5236dc)
+
+## Known issues
+
+For the full list of issues please refer to fd.io [JIRA](https://jira.fd.io).
+
+## Fixed issues
+
+For the full list of fixed issues please refer to:
+- fd.io [JIRA](https://jira.fd.io)
+- git [commit log](https://git.fd.io/vpp/log/?h=stable/2009)
+
+
+## API changes
+
+Description of results:
+
+* _Definition changed_: indicates that the API file was modified between releases.
+* _Only in image_: indicates the API is new for this release.
+* _Only in file_: indicates the API has been removed in this release.
+
+Message Name                                                 | Result
+-------------------------------------------------------------|------------------
+adl_allowlist_enable_disable                                 | only in image
+adl_allowlist_enable_disable_reply                           | only in image
+adl_interface_enable_disable                                 | only in image
+adl_interface_enable_disable_reply                           | only in image
+bond_add_member                                              | only in image
+bond_add_member_reply                                        | only in image
+bond_create2                                                 | only in image
+bond_create2_reply                                           | only in image
+bond_detach_member                                           | only in image
+bond_detach_member_reply                                     | only in image
+cnat_add_del_snat_prefix                                     | only in image
+cnat_add_del_snat_prefix_reply                               | only in image
+cnat_session_details                                         | only in image
+cnat_session_dump                                            | only in image
+cnat_session_purge                                           | only in image
+cnat_session_purge_reply                                     | only in image
+cnat_set_snat_addresses                                      | only in image
+cnat_set_snat_addresses_reply                                | only in image
+cnat_translation_del                                         | only in image
+cnat_translation_del_reply                                   | only in image
+cnat_translation_details                                     | only in image
+cnat_translation_dump                                        | only in image
+cnat_translation_update                                      | only in image
+cnat_translation_update_reply                                | only in image
+crypto_set_async_dispatch                                    | only in image
+crypto_set_async_dispatch_reply                              | only in image
+crypto_set_handler                                           | only in image
+crypto_set_handler_reply                                     | only in image
+crypto_sw_scheduler_set_worker                               | only in image
+crypto_sw_scheduler_set_worker_reply                         | only in image
+det44_add_del_map                                            | only in image
+det44_add_del_map_reply                                      | only in image
+det44_close_session_in                                       | only in image
+det44_close_session_in_reply                                 | only in image
+det44_close_session_out                                      | only in image
+det44_close_session_out_reply                                | only in image
+det44_forward                                                | only in image
+det44_forward_reply                                          | only in image
+det44_get_timeouts                                           | only in image
+det44_get_timeouts_reply                                     | only in image
+det44_interface_add_del_feature                              | only in image
+det44_interface_add_del_feature_reply                        | only in image
+det44_interface_details                                      | only in image
+det44_interface_dump                                         | only in image
+det44_map_details                                            | only in image
+det44_map_dump                                               | only in image
+det44_plugin_enable_disable                                  | only in image
+det44_plugin_enable_disable_reply                            | only in image
+det44_reverse                                                | only in image
+det44_reverse_reply                                          | only in image
+det44_session_details                                        | only in image
+det44_session_dump                                           | only in image
+det44_set_timeouts                                           | only in image
+det44_set_timeouts_reply                                     | only in image
+flow_add                                                     | only in image
+flow_add_reply                                               | only in image
+flow_del                                                     | only in image
+flow_del_reply                                               | only in image
+flow_disable                                                 | only in image
+flow_disable_reply                                           | only in image
+flow_enable                                                  | only in image
+flow_enable_reply                                            | only in image
+geneve_add_del_tunnel2                                       | only in image
+geneve_add_del_tunnel2_reply                                 | only in image
+gtpu_add_del_tunnel                                          | definition changed
+gtpu_tunnel_details                                          | definition changed
+gtpu_tunnel_update_tteid                                     | only in image
+gtpu_tunnel_update_tteid_reply                               | only in image
+ikev2_child_sa_details                                       | only in image
+ikev2_child_sa_dump                                          | only in image
+ikev2_nonce_get                                              | only in image
+ikev2_nonce_get_reply                                        | only in image
+ikev2_profile_details                                        | only in image
+ikev2_profile_dump                                           | only in image
+ikev2_profile_set_ts                                         | definition changed
+ikev2_sa_details                                             | only in image
+ikev2_sa_dump                                                | only in image
+ikev2_set_esp_transforms                                     | definition changed
+ikev2_set_ike_transforms                                     | definition changed
+ikev2_set_responder                                          | definition changed
+ikev2_traffic_selector_details                               | only in image
+ikev2_traffic_selector_dump                                  | only in image
+ipsec_itf_create                                             | only in image
+ipsec_itf_create_reply                                       | only in image
+ipsec_itf_delete                                             | only in image
+ipsec_itf_delete_reply                                       | only in image
+ipsec_itf_details                                            | only in image
+ipsec_itf_dump                                               | only in image
+ipsec_set_async_mode                                         | only in image
+ipsec_set_async_mode_reply                                   | only in image
+map_domains_get                                              | only in image
+map_domains_get_reply                                        | only in image
+nat44_add_del_static_mapping_v2                              | only in image
+nat44_add_del_static_mapping_v2_reply                        | only in image
+nat_show_config_2                                            | only in image
+nat_show_config_2_reply                                      | only in image
+nsim_configure2                                              | only in image
+nsim_configure2_reply                                        | only in image
+pg_interface_enable_disable_coalesce                         | only in image
+pg_interface_enable_disable_coalesce_reply                   | only in image
+sr_policies_with_sl_index_details                            | only in image
+sr_policies_with_sl_index_dump                               | only in image
+sw_bond_interface_details                                    | only in image
+sw_bond_interface_dump                                       | only in image
+sw_member_interface_details                                  | only in image
+sw_member_interface_dump                                     | only in image
+trace_details                                                | only in image
+trace_dump                                                   | only in image
+trace_dump_reply                                             | only in image
+virtio_pci_create_v2                                         | only in image
+virtio_pci_create_v2_reply                                   | only in image
+wireguard_interface_create                                   | only in image
+wireguard_interface_create_reply                             | only in image
+wireguard_interface_delete                                   | only in image
+wireguard_interface_delete_reply                             | only in image
+wireguard_interface_details                                  | only in image
+wireguard_interface_dump                                     | only in image
+wireguard_peer_add                                           | only in image
+wireguard_peer_add_reply                                     | only in image
+wireguard_peer_remove                                        | only in image
+wireguard_peer_remove_reply                                  | only in image
+wireguard_peers_details                                      | only in image
+wireguard_peers_dump                                         | only in image
+
+Found 123 api message signature differences
+
+
+### Newly deprecated API messages
+
+These messages are still there in the API, but can and probably
+will disappear in the next release.
+
+- bond_create
+- bond_detach_slave
+- bond_detach_slave_reply
+- bond_enslave
+- cop_interface_enable_disable
+- cop_interface_enable_disable_reply
+- cop_whitelist_enable_disable
+- cop_whitelist_enable_disable_reply
+- geneve_add_del_tunnel
+- ipsec_tunnel_if_add_del
+- ipsec_tunnel_if_set_sa
+- ipsec_tunnel_if_set_sa_reply
+- map_domain_dump
+- nat_det_add_del_map
+- nat_det_add_del_map_reply
+- nat_det_close_session_in
+- nat_det_close_session_in_reply
+- nat_det_close_session_out
+- nat_det_close_session_out_reply
+- nat_det_forward
+- nat_det_forward_reply
+- nat_det_map_details
+- nat_det_map_dump
+- nat_det_reverse
+- nat_det_reverse_reply
+- nat_det_session_details
+- nat_det_session_dump
+- nat_show_config
+- nsim_configure
+- nsim_configure_reply
+- sw_interface_bond_dump
+- sw_interface_slave_dump
+- virtio_pci_create
+- virtio_pci_create_reply
+
+### In-progress API messages
+
+These messages are provided for testing and experimentation only.
+They are *not* subject to any compatibility process,
+and therefore can arbitrarily change or disappear at *any* moment.
+Also they may have less than satisfactory testing, making
+them unsuitable for other use than the technology preview.
+If you are intending to use these messages in production projects,
+please collaborate with the feature maintainer on their productization.
+
+- abf_itf_attach_add_del
+- abf_itf_attach_add_del_reply
+- abf_itf_attach_details
+- abf_itf_attach_dump
+- abf_plugin_get_version
+- abf_plugin_get_version_reply
+- abf_policy_add_del
+- abf_policy_add_del_reply
+- abf_policy_details
+- abf_policy_dump
+- adl_allowlist_enable_disable
+- adl_allowlist_enable_disable_reply
+- adl_interface_enable_disable
+- adl_interface_enable_disable_reply
+- af_xdp_create
+- af_xdp_create_reply
+- af_xdp_delete
+- af_xdp_delete_reply
+- cnat_add_del_snat_prefix
+- cnat_add_del_snat_prefix_reply
+- cnat_session_details
+- cnat_session_dump
+- cnat_session_purge
+- cnat_session_purge_reply
+- cnat_set_snat_addresses
+- cnat_set_snat_addresses_reply
+- cnat_translation_del
+- cnat_translation_del_reply
+- cnat_translation_details
+- cnat_translation_dump
+- cnat_translation_update
+- cnat_translation_update_reply
+- crypto_sw_scheduler_set_worker
+- crypto_sw_scheduler_set_worker_reply
+- det44_get_timeouts_reply
+- det44_interface_add_del_feature
+- det44_interface_add_del_feature_reply
+- det44_interface_details
+- det44_interface_dump
+- det44_plugin_enable_disable
+- det44_plugin_enable_disable_reply
+- det44_set_timeouts
+- det44_set_timeouts_reply
+- flow_add
+- flow_add_reply
+- flow_del
+- flow_del_reply
+- flow_disable
+- flow_disable_reply
+- flow_enable
+- flow_enable_reply
+- gbp_bridge_domain_add
+- gbp_bridge_domain_add_reply
+- gbp_bridge_domain_del
+- gbp_bridge_domain_del_reply
+- gbp_bridge_domain_details
+- gbp_bridge_domain_dump
+- gbp_bridge_domain_dump_reply
+- gbp_contract_add_del
+- gbp_contract_add_del_reply
+- gbp_contract_details
+- gbp_contract_dump
+- gbp_endpoint_add
+- gbp_endpoint_add_reply
+- gbp_endpoint_del
+- gbp_endpoint_del_reply
+- gbp_endpoint_details
+- gbp_endpoint_dump
+- gbp_endpoint_group_add
+- gbp_endpoint_group_add_reply
+- gbp_endpoint_group_del
+- gbp_endpoint_group_del_reply
+- gbp_endpoint_group_details
+- gbp_endpoint_group_dump
+- gbp_ext_itf_add_del
+- gbp_ext_itf_add_del_reply
+- gbp_ext_itf_details
+- gbp_ext_itf_dump
+- gbp_recirc_add_del
+- gbp_recirc_add_del_reply
+- gbp_recirc_details
+- gbp_recirc_dump
+- gbp_route_domain_add
+- gbp_route_domain_add_reply
+- gbp_route_domain_del
+- gbp_route_domain_del_reply
+- gbp_route_domain_details
+- gbp_route_domain_dump
+- gbp_route_domain_dump_reply
+- gbp_subnet_add_del
+- gbp_subnet_add_del_reply
+- gbp_subnet_details
+- gbp_subnet_dump
+- gbp_vxlan_tunnel_add
+- gbp_vxlan_tunnel_add_reply
+- gbp_vxlan_tunnel_del
+- gbp_vxlan_tunnel_del_reply
+- gbp_vxlan_tunnel_details
+- gbp_vxlan_tunnel_dump
+- ikev2_child_sa_details
+- ikev2_child_sa_dump
+- ikev2_initiate_del_child_sa
+- ikev2_initiate_del_child_sa_reply
+- ikev2_initiate_del_ike_sa
+- ikev2_initiate_del_ike_sa_reply
+- ikev2_initiate_rekey_child_sa
+- ikev2_initiate_rekey_child_sa_reply
+- ikev2_initiate_sa_init
+- ikev2_initiate_sa_init_reply
+- ikev2_nonce_get
+- ikev2_nonce_get_reply
+- ikev2_profile_add_del
+- ikev2_profile_add_del_reply
+- ikev2_profile_details
+- ikev2_profile_dump
+- ikev2_profile_set_auth
+- ikev2_profile_set_auth_reply
+- ikev2_profile_set_id
+- ikev2_profile_set_id_reply
+- ikev2_profile_set_ipsec_udp_port
+- ikev2_profile_set_ipsec_udp_port_reply
+- ikev2_profile_set_liveness
+- ikev2_profile_set_liveness_reply
+- ikev2_profile_set_ts
+- ikev2_profile_set_ts_reply
+- ikev2_profile_set_udp_encap
+- ikev2_profile_set_udp_encap_reply
+- ikev2_sa_details
+- ikev2_sa_dump
+- ikev2_set_esp_transforms
+- ikev2_set_esp_transforms_reply
+- ikev2_set_ike_transforms
+- ikev2_set_ike_transforms_reply
+- ikev2_set_local_key
+- ikev2_set_local_key_reply
+- ikev2_set_responder
+- ikev2_set_responder_reply
+- ikev2_set_sa_lifetime
+- ikev2_set_sa_lifetime_reply
+- ikev2_set_tunnel_interface
+- ikev2_set_tunnel_interface_reply
+- ikev2_traffic_selector_details
+- ikev2_traffic_selector_dump
+- l2_emulation
+- l2_emulation_reply
+- mdata_enable_disable
+- mdata_enable_disable_reply
+- nat44_add_del_static_mapping_v2
+- nat44_add_del_static_mapping_v2_reply
+- oddbuf_enable_disable
+- oddbuf_enable_disable_reply
+- pg_interface_enable_disable_coalesce
+- pg_interface_enable_disable_coalesce_reply
+- sample_macswap_enable_disable
+- sample_macswap_enable_disable_reply
+- sr_policies_with_sl_index_details
+- sr_policies_with_sl_index_dump
+- sw_interface_set_vxlan_gbp_bypass
+- sw_interface_set_vxlan_gbp_bypass_reply
+- trace_details
+- trace_dump
+- trace_dump_reply
+- vxlan_gbp_tunnel_add_del
+- vxlan_gbp_tunnel_add_del_reply
+- vxlan_gbp_tunnel_details
+- vxlan_gbp_tunnel_dump
+- wireguard_interface_create
+- wireguard_interface_create_reply
+- wireguard_interface_delete
+- wireguard_interface_delete_reply
+- wireguard_interface_details
+- wireguard_interface_dump
+- wireguard_peer_add
+- wireguard_peer_add_reply
+- wireguard_peer_remove
+- wireguard_peer_remove_reply
+- wireguard_peers_details
+- wireguard_peers_dump
+
+### Patches that changed API definitions
+
+| @c src/vpp/api/vpe.api ||
+| ------- | ------- |
+| [d0236f725](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=d0236f725) | flow: add vnet/flow formal API |
+
+| @c src/vnet/crypto/crypto.api ||
+| ------- | ------- |
+| [4035daffd](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=4035daffd) | crypto: Crypto set handler API to support set all as CLI |
+| [0c936b147](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=0c936b147) | crypto: Add async crypto APIs |
+
+| @c src/vnet/cop/cop.api ||
+| ------- | ------- |
+| [00f21fb2f](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=00f21fb2f) | api: clean up use of deprecated flag |
+| [ac0326fc5](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=ac0326fc5) | adl: move allow/deny list function to plugin |
+
+| @c src/vnet/lisp-gpe/lisp_gpe.api ||
+| ------- | ------- |
+| [4ab5190eb](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=4ab5190eb) | lisp: API cleanup |
+
+| @c src/vnet/vxlan-gbp/vxlan_gbp.api ||
+| ------- | ------- |
+| [f72b1aff7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=f72b1aff7) | vxlan-gbp: Mark APIs as in-progress |
+
+| @c src/vnet/flow/flow_types.api ||
+| ------- | ------- |
+| [34bfa50b6](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=34bfa50b6) | flow: code refactor |
+| [d0236f725](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=d0236f725) | flow: add vnet/flow formal API |
+
+| @c src/vnet/flow/flow.api ||
+| ------- | ------- |
+| [d0236f725](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=d0236f725) | flow: add vnet/flow formal API |
+
+| @c src/vnet/srv6/sr.api ||
+| ------- | ------- |
+| [30fa97dc6](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=30fa97dc6) | sr: new messages created to return sl index for segment lists in a sr policy |
+
+| @c src/vnet/pg/pg.api ||
+| ------- | ------- |
+| [f382b06fe](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=f382b06fe) | gso: packet coalesce library |
+| [0cf528233](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=0cf528233) | gso: fix the udp checksum in test |
+
+| @c src/vnet/geneve/geneve.api ||
+| ------- | ------- |
+| [00f21fb2f](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=00f21fb2f) | api: clean up use of deprecated flag |
+| [7fc88cf3a](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=7fc88cf3a) | geneve: support geneve interface acting as a bvi |
+
+| @c src/vnet/lisp-cp/one.api ||
+| ------- | ------- |
+| [4ab5190eb](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=4ab5190eb) | lisp: API cleanup |
+
+| @c src/vnet/lisp-cp/lisp.api ||
+| ------- | ------- |
+| [4ab5190eb](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=4ab5190eb) | lisp: API cleanup |
+
+| @c src/vnet/devices/tap/tapv2.api ||
+| ------- | ------- |
+| [50bd16559](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=50bd16559) | tap: add virtio 1.1 API flag |
+
+| @c src/vnet/devices/virtio/vhost_user.api ||
+| ------- | ------- |
+| [a0e8d9669](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=a0e8d9669) | virtio: add vhost sw_if_index filter for sw_interface_vhost_user_dump |
+
+| @c src/vnet/devices/virtio/virtio.api ||
+| ------- | ------- |
+| [00f21fb2f](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=00f21fb2f) | api: clean up use of deprecated flag |
+| [518251bc8](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=518251bc8) | virtio: add virtio 1.1 api flags |
+
+| @c src/vnet/ipsec/ipsec.api ||
+| ------- | ------- |
+| [00f21fb2f](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=00f21fb2f) | api: clean up use of deprecated flag |
+| [2e84d6655](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=2e84d6655) | ipsec: add ipsec set async mode api |
+| [e6df80de4](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=e6df80de4) | ipsec: Deprecate old interface API |
+| [dd4ccf262](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=dd4ccf262) | ipsec: Dedicated IPSec interface type |
+
+| @c src/vnet/bonding/bond.api ||
+| ------- | ------- |
+| [ea7178631](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=ea7178631) | bonding: add bond_create2 API to include gso option |
+| [4c4223edf](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=4c4223edf) | bonding lacp: replace slave string with member |
+
+| @c src/vnet/ip/ip_types.api ||
+| ------- | ------- |
+| [d0236f725](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=d0236f725) | flow: add vnet/flow formal API |
+
+| @c src/plugins/wireguard/wireguard.api ||
+| ------- | ------- |
+| [edca1325c](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=edca1325c) | wireguard: initial implementation of wireguard protocol |
+
+| @c src/plugins/map/map.api ||
+| ------- | ------- |
+| [00f21fb2f](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=00f21fb2f) | api: clean up use of deprecated flag |
+| [ac0326fc5](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=ac0326fc5) | adl: move allow/deny list function to plugin |
+| [f5db3711b](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=f5db3711b) | api: add new stream message convention |
+
+| @c src/plugins/lacp/lacp.api ||
+| ------- | ------- |
+| [4c4223edf](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=4c4223edf) | bonding lacp: replace slave string with member |
+
+| @c src/plugins/l2e/l2e.api ||
+| ------- | ------- |
+| [f733e7ade](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=f733e7ade) | l2e: mark API as in-progress |
+
+| @c src/plugins/ikev2/ikev2.api ||
+| ------- | ------- |
+| [a340fe1ac](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=a340fe1ac) | ikev2: add SA dump API |
+| [459d17bb7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=459d17bb7) | ikev2: refactor and test profile dump API |
+| [ac46e3b1d](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=ac46e3b1d) | ikev2: API downgrade due to lack of ikev2 tests |
+| [6a9bd8188](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=6a9bd8188) | ikev2: add profile dump API |
+
+| @c src/plugins/ikev2/ikev2_types.api ||
+| ------- | ------- |
+| [a340fe1ac](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=a340fe1ac) | ikev2: add SA dump API |
+| [459d17bb7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=459d17bb7) | ikev2: refactor and test profile dump API |
+| [6a9bd8188](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=6a9bd8188) | ikev2: add profile dump API |
+
+| @c src/plugins/tracedump/tracedump.api ||
+| ------- | ------- |
+| [65b65a469](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=65b65a469) | misc: add tracedump API plugin |
+
+| @c src/plugins/gtpu/gtpu.api ||
+| ------- | ------- |
+| [9ebbb5c41](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=9ebbb5c41) | gtpu: support separate rx-decap and encap-tx teid values |
+
+| @c src/plugins/gbp/gbp.api ||
+| ------- | ------- |
+| [d2f8fb9c7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=d2f8fb9c7) | gbp: mark APIs as in-progress |
+
+| @c src/plugins/acl/acl.api ||
+| ------- | ------- |
+| [24ee40a5c](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=24ee40a5c) | acl: correct acl vat help message |
+
+| @c src/plugins/nat/dslite/dslite.api ||
+| ------- | ------- |
+| [603e75465](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=603e75465) | nat: move deterministic nat to det44 sub feature |
+
+| @c src/plugins/nat/det44/det44.api ||
+| ------- | ------- |
+| [00f21fb2f](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=00f21fb2f) | api: clean up use of deprecated flag |
+| [603e75465](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=603e75465) | nat: move deterministic nat to det44 sub feature |
+
+| @c src/plugins/nat/nat_types.api ||
+| ------- | ------- |
+| [96068d6b9](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=96068d6b9) | nat: nat66 to plugin |
+
+| @c src/plugins/nat/nat.api ||
+| ------- | ------- |
+| [6484f4b9c](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=6484f4b9c) | nat: twice-nat static mapping pool address |
+| [edc816355](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=edc816355) | nat: fix type in api message |
+| [603e75465](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=603e75465) | nat: move deterministic nat to det44 sub feature |
+| [96068d6b9](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=96068d6b9) | nat: nat66 to plugin |
+
+| @c src/plugins/nat/nat66/nat66.api ||
+| ------- | ------- |
+| [96068d6b9](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=96068d6b9) | nat: nat66 to plugin |
+
+| @c src/plugins/cnat/cnat.api ||
+| ------- | ------- |
+| [29f3c7d2e](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=29f3c7d2e) | cnat: Destination based NAT |
+
+| @c src/plugins/abf/abf.api ||
+| ------- | ------- |
+| [df494dafa](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=df494dafa) | abf: mark API as in-progress |
+
+| @c src/plugins/adl/adl.api ||
+| ------- | ------- |
+| [ac0326fc5](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=ac0326fc5) | adl: move allow/deny list function to plugin |
+
+| @c src/plugins/nsim/nsim.api ||
+| ------- | ------- |
+| [00f21fb2f](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=00f21fb2f) | api: clean up use of deprecated flag |
+| [e6c3e8f0e](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=e6c3e8f0e) | nsim: basic reorder support |
+
+| @c src/plugins/crypto_sw_scheduler/crypto_sw_scheduler.api ||
+| ------- | ------- |
+| [0c936b147](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=0c936b147) | crypto: Add async crypto APIs |
+
+| @c src/plugins/dhcp/dhcp.api ||
+| ------- | ------- |
+| [bad679291](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=bad679291) | api: register endian handlers for reply messages |
+
+| @c src/plugins/af_xdp/af_xdp.api ||
+| ------- | ------- |
+| [4a76d6f6d](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=4a76d6f6d) | af_xdp: AF_XDP input plugin |
+
+
+@page release_notes_20051 Release notes for VPP 20.05.1
+
+This is bug fix release.
+
+For the full list of fixed issues please refer to:
+- fd.io [JIRA](https://jira.fd.io)
+- git [commit log](https://git.fd.io/vpp/log/?h=stable/2005)
 
 @page release_notes_2005 Release notes for VPP 20.05
 
-TBD
+More than 751 commits since the 20.01 release.
+
+## Release Highlights
+
+### Feature Highlights
+
+As per commits involving
+FEATURE.yaml edits between the previous release and this release.
+They are mentioned in the below "features" section as well,
+together with the corresponding commits.
+
+- TAP Drivers
+  - Implement sw_interface_tap_v2_dump filtering by sw_if_index
+  - Add support for persistence
+- Native Virtio Drivers
+  - Support virtio 1.1 packed ring in vhost
+- gso
+  - Add support for IP-IP
+  - Add vxlan tunnel support
+- VRRP
+  - Add plugin providing VRRP support
+
+### Ongoing Work On More Semantic-Typed API
+
+This release, like the 20.01, continues the journey on defining
+the semantic-based types instead of storage-based types within the API,
+so you may have noticed this in the API changes.
+
+Some of the changes
+are related to the infrastructure, and may be bugfixes, they
+do not change the CRC of the message but affect the representation
+on the wire. One particular commit we want you to pay attention to,
+is [b5c0d35f](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=b5c0d35f), which
+fixes the bug with the enum representation on the wire - before it,
+even the enums declared as u8 or u16 were represented as u32 in
+the API messages.
+
+Another important commit we would like to call out explicitly as well is
+[7dd63e5c](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=7dd63e5c), which
+pinned the address_family and ip_proto enum types to be u8 instead of the default u32.
+
+The above two commits will be primarily interesting for those who work with the low-level
+APIs on VPP - the API frameworks should make these under-the-hood changes transparent.
+However, we decided to call these out, given that for those affected these will
+be pretty important changes.
+
+Another commit, that does not have the immediate impact at the moment, but that
+is poised to improve the user interaction with the API is [5c318c70](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=5c318c70).
+This adds the tooling and ability to implement a structured process,
+by which the API messages can evolve, while minimizing the impact to the
+API users.
+
+## Features
+
+- Binary API Compiler for Python
+  - Api crc checker (5c318c70d)
+- Binary API Libraries
+  - Add macro that zeros out api reply buffer (f24de1795)
+- Build System
+  - Add snap packaging (experimental) (6d97e62c0)
+  - Support arch-specific compiling for Neoverse N1 (690ce8672)
+- Crypto native Plugin
+  - Add ARMv8 AES-CBC implementation (776644efe)
+  - Add AArch64 AES-GCM native implementation (622b5ce61)
+  - Calculate ghash using vpclmulqdq instructions (627fb6a16)
+  - GCM implementation with vector AESNI instructions (47d8f5dcd)
+- Infrastructure Library
+  - Add x86 CPU definitions (38e0413b2)
+  - Numa vector placement support (a690fdbfe)
+  - Add cmake option to grow vectors by 1 (98bd75778)
+  - Add tw\_timer\_2t\_2w\_512sl variant (907678977)
+- Link Bonding
+  - Add GSO support (2e1fa54b7)
+- Plugins
+  - DPDK
+    - Output switch information (2347278d9)
+    - Use port\_id as interface name suffix for representors (a80f8f371)
+    - Add iova-mode to startup (4e96ddaec)
+    - Bump DPDK version to 20.02 (76be887d8)
+    - Enable DPDK iAVF PMD (162ea767c)
+    - DPDK 20.05 iavf flow director backporting to DPDK 20.02 (7f83738b4)
+  - GTPU
+    - Offload RX flow (00fdf53c7)
+    - RX offload for IPv6 payload supporting (ed63a0ff7)
+  - Host Stack Applications
+    - Proxy rcv wnd update acks after full fifos (dda2dbeda)
+  - IPv6 Segment Routing Mobile
+    - Support GTP4/6.DT and User Plane message mapping (9e722bd46)
+  - Internet Key Exchange (IKEv2) Protocol
+    - Configure a profile with an existing interface (44476c6b2)
+    - Responder honours the protected tunnel config (685001f0a)
+    - Add support for custom ipsec-over-udp port (e5d34919b)
+    - Dead peer detection (c415d0a8e)
+  - NAT
+    - In2out-output nodes work with acl reflect (d539e256b)
+    - Api & cli command for forcing session cleanup (edf777272)
+    - Dslite ce mode in separate config entry (958919f36)
+  - QUIC protocol
+    - Update quicly to v0.0.10-VPP (62b1cea6e)
+    - Quicly crypto offloading (92de6b65b)
+    - Check quicly version tag at compile time (ffdc72da4)
+  - RDMA (ibverb) driver
+    - Bunp rdma-core version to v28.0 (eb89b9093)
+    - Add Mellanox mlx5 Direct Verbs receive support (dd648aac0)
+    - Introduce direct verb for Cx4/5 tx (dc812d9a7)
+  - Unicast Reverse Path forwarding
+    - Unicast reverse Path Forwarding (plugin) (d724e4f43)
+  - VRRP
+    - Add plugin providing vrrp support (39e9428b9)
+- SVM Library
+  - Numa awareness for ssvm segments (6fe8998fe)
+  - Support multi-chunk fifo chunk alloc (8e755a16a)
+  - Chunk alloc stats (d35887297)
+  - New FIFO design/architecture (f22f4e562)
+  - Fifo test (64e96613d)
+- Test Infrastructure
+  - Add running\_gcov\_tests to framework.py (d498c9eb2)
+  - Implement ipaddress convenience methods (e64e5fff4)
+- VNET
+  - Crypto Infra
+    - Add chained buffer support in ipsecmb (AES-GCM) (2fc409131)
+    - Add support for testing quad loops in crypto algos (a9075dcf6)
+    - Introduce async crypto infra (f539578ba)
+  - Ethernet
+    - Configure system default ethernet MTU (5fa452554)
+  - FLOW
+    - Add vlan tagged types for IPv4/IPv6 5-tuple flows (f13830ce7)
+    - Add RSS support (24e2c50bf)
+    - Add l2tpv3oip flow (8b43aaaf1)
+  - GRE
+    - Tunnel encap/decap flags (e5b94dded)
+  - GSO
+    - Add vxlan tunnel support (0b04209ed)
+    - Add support for IP-IP (84f91fa9c)
+  - IP Neighbors
+    - Populate neighbor age via API (9c1928f81)
+    - Replace feature for the ip-neighbor data-base (c87fbb417)
+    - Add flush API (240dcb24a)
+  - IPIP
+    - Multi-point interface (14053c9db)
+  - IPSec
+    - Add support for chained buffers (efcad1a9d)
+    - IPSec protection for multi-point tunnel interfaces (282872127)
+    - Add input node bypass/discard functionality (0546483ce)
+    - User can choose the UDP source port (abc5660c6)
+    - Support 4o6 and 6o4 for SPD tunnel mode SAs (b1fd80f09)
+  - IPv4 LPM
+    - More detailed show reassembly commands (a877cf9f3)
+    - Replace Sematics for Interface IP addresses (59f71132e)
+  - MPLS
+    - Add user defined name tag to mpls tunnels (39ae0a07a)
+  - Native Virtio Drivers
+    - Support virtio 1.1 packed ring in vhost (bc0d9ff67)
+  - Packet Generator
+    - Set vnet buffer flags in pg streams (08eb2bb20)
+  - Segment Routing (IPv6 and MPLS)
+    - Change the CLI keyword from address to prefix. (b24e287b9)
+    - Support uSID function. (ec9cb9668)
+  - Session Layer
+    - Tracking segment memory usage (234fe894d)
+    - Basic fifo-tuning-logic (d8f48e216)
+    - Api to add new transport types (07063b8ea)
+    - Support connect on listeners (0a1e183e5)
+    - Adding debug events (7357043d2)
+    - Add option to preallocate fifo headers (9845c20d7)
+  - TAP Drivers
+    - Add support for persistance (b49bc1ae6)
+    - Add initial support for tun (206acf84d)
+    - Implement sw\_interface\_tap\_v2\_dump filtering by sw\_if\_index (073d74d0b)
+  - TCP
+    - Add option to avoid endpoint cleanup (43818c1e0)
+    - Minimal set of worker stats (5e6305fb0)
+    - Allow custom mss on connects (ff19e3bf4)
+  - TLS and TLS engine plugins
+    - Picotls engine symmetric crypto enhancement by VPP crypto framework (3b8518164)
+  - UDP
+    - Track connection port sharing (a039620c2)
+- VPP Comms Library
+  - Udp session migration notifications (68b7e5888)
+  - Propagate cleanup notifications to apps (9ace36d0f)
+- Vector Library
+  - Add plugin override support (8dc954a4e)
+  - Calculate per-worker loops/second metric (000a029e4)
+  - Leave SIGPROF signal with its default handler (6f533d780)
+  - Add nosyslog unix option (e31820af1)
+- Gomemif
+  - Introduce gomemif (07363a45f)
+
+## Known issues
+
+For the full list of issues please refer to fd.io [JIRA](https://jira.fd.io).
+
+## Fixed issues
+
+For the full list of fixed issues please refer to:
+- fd.io [JIRA](https://jira.fd.io)
+- git [commit log](https://git.fd.io/vpp/log/?h=stable/2005)
+
+
+## API changes
+
+Description of results:
+
+* _Definition changed_: indicates that the API file was modified between releases.
+* _Only in image_: indicates the API is new for this release.
+* _Only in file_: indicates the API has been removed in this release.
+
+Message Name                                                 | Result
+-------------------------------------------------------------|------------------
+acl_add_replace                                              | definition changed
+acl_details                                                  | definition changed
+acl_interface_add_del                                        | definition changed
+acl_interface_etype_whitelist_details                        | definition changed
+acl_interface_etype_whitelist_dump                           | definition changed
+acl_interface_list_details                                   | definition changed
+acl_interface_list_dump                                      | definition changed
+acl_interface_set_acl_list                                   | definition changed
+acl_interface_set_etype_whitelist                            | definition changed
+add_node_next                                                | definition changed
+app_attach                                                   | definition changed
+app_attach_reply                                             | definition changed
+app_cut_through_registration_add                             | only in file
+app_cut_through_registration_add_reply                       | only in file
+app_namespace_add_del                                        | definition changed
+app_worker_add_del                                           | definition changed
+app_worker_add_del_reply                                     | definition changed
+application_attach                                           | only in file
+application_attach_reply                                     | only in file
+bd_ip_mac_add_del                                            | definition changed
+bind_sock                                                    | only in file
+bind_sock_reply                                              | only in file
+bind_uri                                                     | only in file
+bind_uri_reply                                               | only in file
+bridge_domain_add_del                                        | definition changed
+bridge_domain_details                                        | definition changed
+bridge_domain_dump                                           | definition changed
+bridge_flags                                                 | definition changed
+bvi_create_reply                                             | definition changed
+bvi_delete                                                   | definition changed
+connect_sock                                                 | only in file
+connect_sock_reply                                           | only in file
+connect_uri                                                  | only in file
+connect_uri_reply                                            | only in file
+create_vhost_user_if                                         | definition changed
+disconnect_session                                           | only in file
+disconnect_session_reply                                     | only in file
+get_next_index                                               | definition changed
+get_node_index                                               | definition changed
+gpe_add_del_fwd_entry                                        | definition changed
+gpe_add_del_iface                                            | definition changed
+gpe_add_del_native_fwd_rpath                                 | definition changed
+gpe_enable_disable                                           | definition changed
+gpe_fwd_entries_get_reply                                    | definition changed
+gpe_fwd_entry_path_details                                   | definition changed
+gpe_native_fwd_rpaths_get                                    | definition changed
+gpe_native_fwd_rpaths_get_reply                              | definition changed
+gpe_set_encap_mode                                           | definition changed
+gre_tunnel_add_del                                           | definition changed
+gre_tunnel_details                                           | definition changed
+gtpu_offload_rx                                              | only in image
+gtpu_offload_rx_reply                                        | only in image
+ikev2_profile_set_ipsec_udp_port                             | only in image
+ikev2_profile_set_ipsec_udp_port_reply                       | only in image
+ikev2_profile_set_liveness                                   | only in image
+ikev2_profile_set_liveness_reply                             | only in image
+ikev2_profile_set_udp_encap                                  | only in image
+ikev2_profile_set_udp_encap_reply                            | only in image
+ikev2_set_local_key                                          | definition changed
+ikev2_set_tunnel_interface                                   | only in image
+ikev2_set_tunnel_interface_reply                             | only in image
+ip_neighbor_details                                          | definition changed
+ip_neighbor_flush                                            | only in image
+ip_neighbor_flush_reply                                      | only in image
+ip_neighbor_replace_begin                                    | only in image
+ip_neighbor_replace_begin_reply                              | only in image
+ip_neighbor_replace_end                                      | only in image
+ip_neighbor_replace_end_reply                                | only in image
+ip_route_lookup                                              | only in image
+ip_route_lookup_reply                                        | only in image
+ip_source_check_interface_add_del                            | only in file
+ip_source_check_interface_add_del_reply                      | only in file
+ipfix_classify_table_add_del                                 | definition changed
+ipfix_classify_table_details                                 | definition changed
+ipip_add_tunnel                                              | definition changed
+ipip_tunnel_details                                          | definition changed
+ipsec_backend_details                                        | definition changed
+ipsec_interface_add_del_spd                                  | definition changed
+ipsec_sa_details                                             | definition changed
+ipsec_sad_entry_add_del                                      | definition changed
+ipsec_select_backend                                         | definition changed
+ipsec_spd_add_del                                            | definition changed
+ipsec_spd_details                                            | definition changed
+ipsec_spd_entry_add_del                                      | definition changed
+ipsec_spd_interface_details                                  | definition changed
+ipsec_tunnel_if_add_del                                      | definition changed
+ipsec_tunnel_if_add_del_reply                                | definition changed
+ipsec_tunnel_if_set_sa                                       | definition changed
+ipsec_tunnel_protect_del                                     | definition changed
+ipsec_tunnel_protect_details                                 | definition changed
+ipsec_tunnel_protect_update                                  | definition changed
+l2_fib_table_details                                         | definition changed
+l2_flags                                                     | definition changed
+l2_interface_efp_filter                                      | definition changed
+l2_interface_pbb_tag_rewrite                                 | definition changed
+l2_interface_vlan_tag_rewrite                                | definition changed
+l2_macs_event                                                | definition changed
+l2_patch_add_del                                             | definition changed
+l2_xconnect_details                                          | definition changed
+l2fib_add_del                                                | definition changed
+l2fib_flush_int                                              | definition changed
+lisp_add_del_adjacency                                       | definition changed
+lisp_add_del_local_eid                                       | definition changed
+lisp_add_del_locator                                         | definition changed
+lisp_add_del_locator_set                                     | definition changed
+lisp_add_del_map_request_itr_rlocs                           | definition changed
+lisp_add_del_map_resolver                                    | definition changed
+lisp_add_del_map_server                                      | definition changed
+lisp_add_del_remote_mapping                                  | definition changed
+lisp_adjacencies_get_reply                                   | definition changed
+lisp_eid_table_add_del_map                                   | definition changed
+lisp_eid_table_details                                       | definition changed
+lisp_eid_table_dump                                          | definition changed
+lisp_eid_table_map_dump                                      | definition changed
+lisp_enable_disable                                          | definition changed
+lisp_get_map_request_itr_rlocs_reply                         | definition changed
+lisp_locator_details                                         | definition changed
+lisp_locator_dump                                            | definition changed
+lisp_locator_set_details                                     | definition changed
+lisp_locator_set_dump                                        | definition changed
+lisp_map_register_enable_disable                             | definition changed
+lisp_map_request_mode                                        | definition changed
+lisp_map_resolver_details                                    | definition changed
+lisp_map_server_details                                      | definition changed
+lisp_pitr_set_locator_set                                    | definition changed
+lisp_rloc_probe_enable_disable                               | definition changed
+lisp_use_petr                                                | definition changed
+lldp_config                                                  | definition changed
+macip_acl_add                                                | definition changed
+macip_acl_add_replace                                        | definition changed
+macip_acl_details                                            | definition changed
+macip_acl_interface_add_del                                  | definition changed
+macip_acl_interface_list_details                             | definition changed
+macip_acl_interface_list_dump                                | definition changed
+map_another_segment                                          | only in file
+map_another_segment_reply                                    | only in file
+modify_vhost_user_if                                         | definition changed
+mpls_tunnel_add_del                                          | definition changed
+mpls_tunnel_details                                          | definition changed
+nat44_del_user                                               | only in image
+nat44_del_user_reply                                         | only in image
+nat44_session_cleanup                                        | only in image
+nat44_session_cleanup_reply                                  | only in image
+nat44_set_session_limit                                      | only in image
+nat44_set_session_limit_reply                                | only in image
+nat_show_config_reply                                        | definition changed
+netmap_create                                                | only in file
+netmap_create_reply                                          | only in file
+netmap_delete                                                | only in file
+netmap_delete_reply                                          | only in file
+nhrp_details                                                 | only in file
+nhrp_dump                                                    | only in file
+nhrp_entry_add_del                                           | only in file
+nhrp_entry_add_del_reply                                     | only in file
+one_add_del_adjacency                                        | definition changed
+one_add_del_l2_arp_entry                                     | definition changed
+one_add_del_local_eid                                        | definition changed
+one_add_del_locator                                          | definition changed
+one_add_del_locator_set                                      | definition changed
+one_add_del_map_request_itr_rlocs                            | definition changed
+one_add_del_map_resolver                                     | definition changed
+one_add_del_map_server                                       | definition changed
+one_add_del_ndp_entry                                        | definition changed
+one_add_del_remote_mapping                                   | definition changed
+one_adjacencies_get_reply                                    | definition changed
+one_eid_table_add_del_map                                    | definition changed
+one_eid_table_details                                        | definition changed
+one_eid_table_dump                                           | definition changed
+one_eid_table_map_dump                                       | definition changed
+one_enable_disable                                           | definition changed
+one_enable_disable_petr_mode                                 | definition changed
+one_enable_disable_pitr_mode                                 | definition changed
+one_enable_disable_xtr_mode                                  | definition changed
+one_get_map_request_itr_rlocs_reply                          | definition changed
+one_l2_arp_entries_get_reply                                 | definition changed
+one_locator_details                                          | definition changed
+one_locator_dump                                             | definition changed
+one_locator_set_details                                      | definition changed
+one_locator_set_dump                                         | definition changed
+one_map_register_enable_disable                              | definition changed
+one_map_request_mode                                         | definition changed
+one_map_resolver_details                                     | definition changed
+one_map_server_details                                       | definition changed
+one_ndp_entries_get_reply                                    | definition changed
+one_nsh_set_locator_set                                      | definition changed
+one_pitr_set_locator_set                                     | definition changed
+one_rloc_probe_enable_disable                                | definition changed
+one_show_petr_mode_reply                                     | definition changed
+one_show_pitr_mode_reply                                     | definition changed
+one_show_xtr_mode_reply                                      | definition changed
+one_stats_details                                            | definition changed
+one_stats_enable_disable                                     | definition changed
+one_use_petr                                                 | definition changed
+pg_capture                                                   | definition changed
+pg_create_interface                                          | definition changed
+pg_create_interface_reply                                    | definition changed
+pg_enable_disable                                            | definition changed
+policer_add_del                                              | definition changed
+policer_details                                              | definition changed
+policer_dump                                                 | definition changed
+session_enable_disable                                       | definition changed
+session_rule_add_del                                         | definition changed
+session_rules_details                                        | definition changed
+show_lisp_map_register_state_reply                           | definition changed
+show_lisp_map_request_mode_reply                             | definition changed
+show_lisp_pitr_reply                                         | definition changed
+show_lisp_rloc_probe_state_reply                             | definition changed
+show_lisp_status_reply                                       | definition changed
+show_lisp_use_petr_reply                                     | definition changed
+show_one_map_register_state_reply                            | definition changed
+show_one_map_request_mode_reply                              | definition changed
+show_one_nsh_mapping_reply                                   | definition changed
+show_one_pitr_reply                                          | definition changed
+show_one_rloc_probe_state_reply                              | definition changed
+show_one_stats_enable_disable_reply                          | definition changed
+show_one_status_reply                                        | definition changed
+show_one_use_petr_reply                                      | definition changed
+show_threads_reply                                           | definition changed
+sr_localsid_add_del                                          | definition changed
+sr_localsids_details                                         | definition changed
+sr_mpls_policy_add                                           | definition changed
+sr_mpls_policy_assign_endpoint_color                         | definition changed
+sr_mpls_policy_mod                                           | definition changed
+sr_mpls_steering_add_del                                     | definition changed
+sr_policies_details                                          | definition changed
+sr_policy_add                                                | definition changed
+sr_policy_del                                                | definition changed
+sr_policy_mod                                                | definition changed
+sr_set_encap_source                                          | definition changed
+sr_steering_add_del                                          | definition changed
+sr_steering_pol_details                                      | definition changed
+sw_interface_address_replace_begin                           | only in image
+sw_interface_address_replace_begin_reply                     | only in image
+sw_interface_address_replace_end                             | only in image
+sw_interface_address_replace_end_reply                       | only in image
+sw_interface_set_l2_bridge                                   | definition changed
+sw_interface_set_l2_xconnect                                 | definition changed
+sw_interface_set_lldp                                        | definition changed
+sw_interface_set_vpath                                       | definition changed
+sw_interface_set_vxlan_bypass                                | definition changed
+sw_interface_set_vxlan_gpe_bypass                            | definition changed
+sw_interface_span_details                                    | definition changed
+sw_interface_span_dump                                       | definition changed
+sw_interface_span_enable_disable                             | definition changed
+teib_details                                                 | only in image
+teib_dump                                                    | only in image
+teib_entry_add_del                                           | only in image
+teib_entry_add_del_reply                                     | only in image
+unbind_sock                                                  | only in file
+unbind_sock_reply                                            | only in file
+unbind_uri                                                   | only in file
+unbind_uri_reply                                             | only in file
+unmap_segment                                                | only in file
+unmap_segment_reply                                          | only in file
+urpf_update                                                  | only in image
+urpf_update_reply                                            | only in image
+vrrp_vr_add_del                                              | only in image
+vrrp_vr_add_del_reply                                        | only in image
+vrrp_vr_details                                              | only in image
+vrrp_vr_dump                                                 | only in image
+vrrp_vr_peer_details                                         | only in image
+vrrp_vr_peer_dump                                            | only in image
+vrrp_vr_set_peers                                            | only in image
+vrrp_vr_set_peers_reply                                      | only in image
+vrrp_vr_start_stop                                           | only in image
+vrrp_vr_start_stop_reply                                     | only in image
+vrrp_vr_track_if_add_del                                     | only in image
+vrrp_vr_track_if_add_del_reply                               | only in image
+vrrp_vr_track_if_details                                     | only in image
+vrrp_vr_track_if_dump                                        | only in image
+vxlan_add_del_tunnel                                         | definition changed
+vxlan_add_del_tunnel_reply                                   | definition changed
+vxlan_gpe_add_del_tunnel                                     | definition changed
+vxlan_gpe_add_del_tunnel_reply                               | definition changed
+vxlan_gpe_tunnel_details                                     | definition changed
+vxlan_gpe_tunnel_dump                                        | definition changed
+vxlan_offload_rx                                             | definition changed
+vxlan_tunnel_details                                         | definition changed
+vxlan_tunnel_dump                                            | definition changed
+
+Found 279 api message signature differences
+
+### Patches that changed API definitions
+
+| @c extras/deprecated/dpdk-hqos/api/dpdk.api ||
+| ------- | ------- |
+| [548d70de6](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=548d70de6) | misc: deprecate dpdk hqos |
+
+| @c extras/deprecated/netmap/netmap.api ||
+| ------- | ------- |
+| [7db6ab03d](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=7db6ab03d) | misc: deprecate netmap and ixge drivers |
+
+| @c src/vpp/api/vpe.api ||
+| ------- | ------- |
+| [933fcf489](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=933fcf489) | api: API cleanup |
+| [7db6ab03d](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=7db6ab03d) | misc: deprecate netmap and ixge drivers |
+
+| @c src/vnet/tunnel/tunnel_types.api ||
+| ------- | ------- |
+| [14053c9db](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=14053c9db) | ipip: Multi-point interface |
+| [59ff918ea](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=59ff918ea) | tunnel: Common types for IP tunnels |
+
+| @c src/vnet/policer/policer_types.api ||
+| ------- | ------- |
+| [cd01fb423](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=cd01fb423) | policer: API cleanup |
+
+| @c src/vnet/policer/policer.api ||
+| ------- | ------- |
+| [cd01fb423](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=cd01fb423) | policer: API cleanup |
+
+| @c src/vnet/lisp-gpe/lisp_gpe.api ||
+| ------- | ------- |
+| [58db6e16c](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=58db6e16c) | lisp: API cleanup |
+
+| @c src/vnet/teib/teib.api ||
+| ------- | ------- |
+| [03ce46219](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=03ce46219) | teib: Rename NHRP to TEIB |
+
+| @c src/vnet/ip-neighbor/ip_neighbor.api ||
+| ------- | ------- |
+| [240dcb24a](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=240dcb24a) | ip-neighbor: Add flush API |
+| [e64e5fff4](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=e64e5fff4) | tests: implement ipaddress convenience methods |
+| [c87fbb417](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c87fbb417) | ip-neighbor: Replace feature for the ip-neighbor data-base |
+| [8e7fdddd3](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=8e7fdddd3) | ip-neighbor: add description to the age parameter |
+| [9c1928f81](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=9c1928f81) | ip-neighbor: populate neighbor age via API |
+
+| @c src/vnet/session/session.api ||
+| ------- | ------- |
+| [6fdd7a5f7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=6fdd7a5f7) | session: improve .api comments slightly |
+| [9845c20d7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=9845c20d7) | session: add option to preallocate fifo headers |
+| [c0e9441e7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c0e9441e7) | tests: move defaults from defaultmapping to .api files |
+| [256779c85](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=256779c85) | udp: remove connected udp transport proto |
+| [888d9f05e](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=888d9f05e) | session: remove obsolete apis |
+| [07063b8ea](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=07063b8ea) | session: api to add new transport types |
+| [b4e5e50fe](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=b4e5e50fe) | session: API cleanup |
+| [2de9c0f92](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=2de9c0f92) | svm: minimal initial fifo |
+
+| @c src/vnet/interface_types.api ||
+| ------- | ------- |
+| [c4ae0fffb](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c4ae0fffb) | interface: fix interface_types.api enums |
+
+| @c src/vnet/vxlan/vxlan.api ||
+| ------- | ------- |
+| [7c0eb56f4](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=7c0eb56f4) | vxlan: vxlan/vxlan.api API cleanup |
+
+| @c src/vnet/vxlan-gbp/vxlan_gbp.api ||
+| ------- | ------- |
+| [c0e9441e7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c0e9441e7) | tests: move defaults from defaultmapping to .api files |
+
+| @c src/vnet/gre/gre.api ||
+| ------- | ------- |
+| [48ac1c2b2](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=48ac1c2b2) | gre: improve .api descriptions |
+| [8ab4e507c](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=8ab4e507c) | gre: add missing .api edits |
+| [e5b94dded](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=e5b94dded) | gre: Tunnel encap/decap flags |
+| [59ff918ea](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=59ff918ea) | tunnel: Common types for IP tunnels |
+
+| @c src/vnet/span/span.api ||
+| ------- | ------- |
+| [908965db7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=908965db7) | span: API cleanup |
+
+| @c src/vnet/srv6/sr.api ||
+| ------- | ------- |
+| [c0e9441e7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c0e9441e7) | tests: move defaults from defaultmapping to .api files |
+| [0938eba15](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=0938eba15) | sr: srv6 API cleanup |
+| [79bfd2725](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=79bfd2725) | sr: SRv6 uN behavior |
+
+| @c src/vnet/srv6/sr_types.api ||
+| ------- | ------- |
+| [0938eba15](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=0938eba15) | sr: srv6 API cleanup |
+
+| @c src/vnet/pg/pg.api ||
+| ------- | ------- |
+| [db86329ab](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=db86329ab) | pg: API cleanup |
+
+| @c src/vnet/l2/l2.api ||
+| ------- | ------- |
+| [c0e9441e7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c0e9441e7) | tests: move defaults from defaultmapping to .api files |
+| [145e330f0](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=145e330f0) | l2: API cleanup |
+
+| @c src/vnet/lldp/lldp.api ||
+| ------- | ------- |
+| [1c684f9af](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=1c684f9af) | lldp: API cleanup |
+
+| @c src/vnet/vxlan-gpe/vxlan_gpe.api ||
+| ------- | ------- |
+| [1c2002a31](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=1c2002a31) | vxlan: vxlan-gpe/vxlan-gpe.cpi API cleanup |
+
+| @c src/vnet/lisp-cp/one.api ||
+| ------- | ------- |
+| [58db6e16c](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=58db6e16c) | lisp: API cleanup |
+
+| @c src/vnet/lisp-cp/lisp_types.api ||
+| ------- | ------- |
+| [58db6e16c](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=58db6e16c) | lisp: API cleanup |
+
+| @c src/vnet/lisp-cp/lisp.api ||
+| ------- | ------- |
+| [58db6e16c](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=58db6e16c) | lisp: API cleanup |
+
+| @c src/vnet/devices/tap/tapv2.api ||
+| ------- | ------- |
+| [d88fc0fce](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=d88fc0fce) | tap: refactor existing flags |
+| [073d74d0b](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=073d74d0b) | tap: implement sw_interface_tap_v2_dump filtering by sw_if_index |
+| [206acf84d](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=206acf84d) | tap: add initial support for tun |
+| [b49bc1ae6](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=b49bc1ae6) | tap: add support for persistance |
+
+| @c src/vnet/devices/virtio/vhost_user.api ||
+| ------- | ------- |
+| [bc0d9ff67](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=bc0d9ff67) | virtio: support virtio 1.1 packed ring in vhost |
+
+| @c src/vnet/devices/virtio/virtio.api ||
+| ------- | ------- |
+| [53f06a014](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=53f06a014) | vlib: move pci api types from vnet/pci to vlib/pci |
+
+| @c src/vnet/ipsec/ipsec_types.api ||
+| ------- | ------- |
+| [abc5660c6](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=abc5660c6) | ipsec: User can choose the UDP source port |
+| [287d5e109](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=287d5e109) | ipsec: API cleanup |
+| [5893747d7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=5893747d7) | api: ipsec: add missing IS_INBOUND flag. |
+| [2fcd265d3](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=2fcd265d3) | ipsec: Revert API cleanup |
+| [666ece35c](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=666ece35c) | ipsec: API cleanup |
+
+| @c src/vnet/ipsec/ipsec.api ||
+| ------- | ------- |
+| [48d32b43c](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=48d32b43c) | ipsec: provide stat index in sa details |
+| [287d5e109](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=287d5e109) | ipsec: API cleanup |
+| [2fcd265d3](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=2fcd265d3) | ipsec: Revert API cleanup |
+| [666ece35c](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=666ece35c) | ipsec: API cleanup |
+| [282872127](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=282872127) | ipsec: IPSec protection for multi-point tunnel interfaces |
+
+| @c src/vnet/ethernet/p2p_ethernet.api ||
+| ------- | ------- |
+| [bdfe5955f](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=bdfe5955f) | ethernet: add sanity checks to p2p_ethernet_add/del |
+
+| @c src/vnet/bonding/bond.api ||
+| ------- | ------- |
+| [c0e9441e7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c0e9441e7) | tests: move defaults from defaultmapping to .api files |
+
+| @c src/vnet/mpls/mpls.api ||
+| ------- | ------- |
+| [c0e9441e7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c0e9441e7) | tests: move defaults from defaultmapping to .api files |
+| [39ae0a07a](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=39ae0a07a) | mpls: add user defined name tag to mpls tunnels |
+
+| @c src/vnet/syslog/syslog.api ||
+| ------- | ------- |
+| [c0e9441e7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c0e9441e7) | tests: move defaults from defaultmapping to .api files |
+
+| @c src/vnet/interface.api ||
+| ------- | ------- |
+| [59f71132e](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=59f71132e) | ip: Replace Sematics for Interface IP addresses |
+
+| @c src/vnet/ipip/ipip.api ||
+| ------- | ------- |
+| [14053c9db](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=14053c9db) | ipip: Multi-point interface |
+| [59ff918ea](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=59ff918ea) | tunnel: Common types for IP tunnels |
+
+| @c src/vnet/srmpls/sr_mpls.api ||
+| ------- | ------- |
+| [0938eba15](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=0938eba15) | sr: srv6 API cleanup |
+| [00ec4019b](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=00ec4019b) | sr: API cleanup |
+
+| @c src/vnet/ip/ip.api ||
+| ------- | ------- |
+| [f5d38e05a](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=f5d38e05a) | api: ip: add IP_ROUTE_LOOKUP API |
+| [c0e9441e7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c0e9441e7) | tests: move defaults from defaultmapping to .api files |
+| [d724e4f43](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=d724e4f43) | urpf: Unicast reverse Path Forwarding (plugin) |
+
+| @c src/vnet/ip/ip_types.api ||
+| ------- | ------- |
+| [164c44f0b](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=164c44f0b) | ip: Fix the AH/ESP protocol numbers on the API |
+| [7dd63e5cc](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=7dd63e5cc) | ip: change ip API enums address_family and ip_proto size to u8 |
+| [3ec09e924](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=3ec09e924) | ip: ip_address_t uses ip46_address_t |
+
+| @c src/plugins/map/map.api ||
+| ------- | ------- |
+| [c0e9441e7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c0e9441e7) | tests: move defaults from defaultmapping to .api files |
+
+| @c src/plugins/ikev2/ikev2.api ||
+| ------- | ------- |
+| [933c4ca5a](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=933c4ca5a) | ikev2: fix string in api |
+| [59fea5a6a](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=59fea5a6a) | ikev2: make liveness params configurable |
+| [8ceb44a89](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=8ceb44a89) | ikev2: fix typo in .api description |
+| [e5d34919b](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=e5d34919b) | ikev2: add support for custom ipsec-over-udp port |
+| [b29d523af](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=b29d523af) | ikev2: make UDP encap flag configurable |
+| [44476c6b2](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=44476c6b2) | ikev2: Configure a profile with an existing interface |
+
+| @c src/plugins/urpf/urpf.api ||
+| ------- | ------- |
+| [d724e4f43](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=d724e4f43) | urpf: Unicast reverse Path Forwarding (plugin) |
+
+| @c src/plugins/lb/lb.api ||
+| ------- | ------- |
+| [c0e9441e7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c0e9441e7) | tests: move defaults from defaultmapping to .api files |
+
+| @c src/plugins/gtpu/gtpu.api ||
+| ------- | ------- |
+| [00fdf53c7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=00fdf53c7) | gtpu: offload RX flow |
+
+| @c src/plugins/acl/acl_types.api ||
+| ------- | ------- |
+| [2f8cd9145](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=2f8cd9145) | acl: API cleanup |
+| [492a5d0bd](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=492a5d0bd) | acl: revert acl: api cleanup |
+| [aad1ee149](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=aad1ee149) | acl: API cleanup |
+
+| @c src/plugins/acl/acl.api ||
+| ------- | ------- |
+| [c0e9441e7](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=c0e9441e7) | tests: move defaults from defaultmapping to .api files |
+| [2f8cd9145](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=2f8cd9145) | acl: API cleanup |
+| [492a5d0bd](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=492a5d0bd) | acl: revert acl: api cleanup |
+| [aad1ee149](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=aad1ee149) | acl: API cleanup |
+
+| @c src/plugins/nat/dslite/dslite.api ||
+| ------- | ------- |
+| [2c6639c69](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=2c6639c69) | nat: move dslite to separate sub-plugin |
+
+| @c src/plugins/nat/nat.api ||
+| ------- | ------- |
+| [6bb080f1e](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=6bb080f1e) | nat: per vrf session limits |
+| [61717cc38](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=61717cc38) | nat: use correct data types for memory sizes |
+| [98301bd56](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=98301bd56) | nat: user deletion function & extra metrics |
+| [edf777272](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=edf777272) | nat: api & cli command for forcing session cleanup |
+| [2c6639c69](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=2c6639c69) | nat: move dslite to separate sub-plugin |
+
+| @c src/plugins/vrrp/vrrp.api ||
+| ------- | ------- |
+| [3fccd0278](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=3fccd0278) | vrrp: do not define _details as autoreply |
+| [39e9428b9](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=39e9428b9) | vrrp: add plugin providing vrrp support |
+
+| @c src/vlib/pci/pci_types.api ||
+| ------- | ------- |
+| [53f06a014](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=53f06a014) | vlib: move pci api types from vnet/pci to vlib/pci |
 
 @page release_notes_2001 Release notes for VPP 20.01
 
@@ -1335,6 +2738,14 @@ Found 493 api message signature differences
 | [e71748291](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=e71748291) | vppapigen: remove support for legacy typedefs |
 | [a47a5f20a](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=a47a5f20a) | api papi: add alias for timestamp(datetime)/timedelta |
 | [3cf9e67f5](https://gerrit.fd.io/r/gitweb?p=vpp.git;a=commit;h=3cf9e67f5) | api: add vl_api_version_t type |
+
+@page release_notes_19083 Release notes for VPP 19.08.3
+
+This is bug fix release.
+
+For the full list of fixed issues please refer to:
+- fd.io [JIRA](https://jira.fd.io)
+- git [commit log](https://git.fd.io/vpp/log/?h=stable/1908)
 
 @page release_notes_19082 Release notes for VPP 19.08.2
 
@@ -6031,15 +7442,6 @@ For the full list of issues please reffer to fd.io [JIRA](https://jira.fd.io).
 For the full list of fixed issues please reffer to:
 - fd.io [JIRA](https://jira.fd.io)
 - git [commit log](https://git.fd.io/vpp/log/?h=stable/1704)
-
-
-@page release_notes_17011 Release notes for VPP 17.01.1
-
-This is bug fix release.
-
-For the full list of fixed issues please reffer to:
-- fd.io [JIRA](https://jira.fd.io)
-- git [commit log](https://git.fd.io/vpp/log/?h=stable/1701)
 
 
 @page release_notes_17011 Release notes for VPP 17.01.1

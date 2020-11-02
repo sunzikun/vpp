@@ -207,6 +207,7 @@ int vrrp_vr_tracking_if_add_del (vrrp_vr_t * vr, u32 sw_if_index,
 int vrrp_vr_tracking_ifs_add_del (vrrp_vr_t * vr,
 				  vrrp_vr_tracking_if_t * track_ifs,
 				  u8 is_add);
+void vrrp_vr_event (vrrp_vr_t * vr, vrrp_vr_state_t new_state);
 
 
 always_inline void
@@ -230,12 +231,14 @@ always_inline vrrp_vr_t *
 vrrp_vr_lookup (u32 sw_if_index, u8 vr_id, u8 is_ipv6)
 {
   vrrp_main_t *vmp = &vrrp_main;
-  vrrp_vr_key_t key = {
-    .sw_if_index = sw_if_index,
-    .vr_id = vr_id,
-    .is_ipv6 = (is_ipv6 != 0),
-  };
+  vrrp_vr_key_t key;
   uword *p;
+
+  clib_memset (&key, 0, sizeof (key));
+
+  key.sw_if_index = sw_if_index;
+  key.vr_id = vr_id;
+  key.is_ipv6 = (is_ipv6 != 0);
 
   p = mhash_get (&vmp->vr_index_by_key, &key);
   if (p)

@@ -30,7 +30,8 @@
   _(1, ADMIN_UP, "admin-up") \
   _(2, LINK_UP, "link-up") \
   _(3, PROMISC, "promiscuous") \
-  _(4, MLX5DV, "mlx5dv")
+  _(4, MLX5DV, "mlx5dv") \
+  _(5, STRIDING_RQ, "striding-rq")
 
 enum
 {
@@ -81,12 +82,17 @@ typedef struct
   u16 n_mini_cqes_left;
   u16 last_cqe_flags;
   mlx5dv_cqe_t *cqes;
-  mlx5dv_rwq_t *wqes;
+  mlx5dv_wqe_ds_t *wqes;
+    CLIB_CACHE_LINE_ALIGN_MARK (cacheline1);
   volatile u32 *wq_db;
   volatile u32 *cq_db;
   u32 cqn;
   u32 wqe_cnt;
   u32 wq_stride;
+  u32 buf_sz;
+  u32 striding_wqe_tail;
+  u8 log_wqe_sz;		/* log-size of a single WQE (in data segments) */
+  u8 log_stride_per_wqe;	/* Striding RQ: number of strides in a single WQE */
 } rdma_rxq_t;
 
 typedef struct
@@ -146,7 +152,9 @@ STATIC_ASSERT_OFFSET_OF (rdma_txq_t, cacheline2, 128);
 
 #define RDMA_TXQ_USED_SZ(head, tail)            ((u16)((u16)(tail) - (u16)(head)))
 #define RDMA_TXQ_AVAIL_SZ(txq, head, tail)      ((u16)(RDMA_TXQ_BUF_SZ (txq) - RDMA_TXQ_USED_SZ (head, tail)))
-
+#define RDMA_RXQ_MAX_CHAIN_LOG_SZ 3	/* This should NOT be lower than 3! */
+#define RDMA_RXQ_MAX_CHAIN_SZ (1U << RDMA_RXQ_MAX_CHAIN_LOG_SZ)
+#define RDMA_RXQ_LEGACY_MODE_MAX_CHAIN_SZ 5
 typedef struct
 {
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline0);
@@ -172,10 +180,13 @@ typedef struct
   struct ibv_context *ctx;
   struct ibv_pd *pd;
   struct ibv_mr *mr;
-  struct ibv_qp *rx_qp;
+  struct ibv_qp *rx_qp4;
+  struct ibv_qp *rx_qp6;
   struct ibv_rwq_ind_table *rx_rwq_ind_tbl;
-  struct ibv_flow *flow_ucast;
-  struct ibv_flow *flow_mcast;
+  struct ibv_flow *flow_ucast4;
+  struct ibv_flow *flow_mcast4;
+  struct ibv_flow *flow_ucast6;
+  struct ibv_flow *flow_mcast6;
 
   clib_error_t *error;
 } rdma_device_t;
@@ -189,6 +200,8 @@ typedef struct
     u16x8 cqe_flags8[VLIB_FRAME_SIZE / 8];
     u16x16 cqe_flags16[VLIB_FRAME_SIZE / 16];
   };
+  u32 current_segs[VLIB_FRAME_SIZE];
+  u32 to_free_buffers[VLIB_FRAME_SIZE];
   vlib_buffer_t buffer_template;
 } rdma_per_thread_data_t;
 

@@ -24,13 +24,11 @@
 #include <vnet/fib/fib_api.h>
 #include <vnet/unix/tuntap.h>
 #include <vnet/mpls/mpls.h>
-#include <vnet/l2tp/l2tp.h>
 #include <vnet/l2/l2_input.h>
 #include <vnet/srv6/sr.h>
 #include <vnet/srmpls/sr_mpls.h>
 #include <vnet/gre/gre.h>
 #include <vnet/vxlan-gpe/vxlan_gpe.h>
-#include <vnet/geneve/geneve.h>
 #include <vnet/classify/policer_classify.h>
 #include <vnet/policer/xlate.h>
 #include <vnet/policer/policer.h>
@@ -40,7 +38,6 @@
 #include <vlib/unix/unix.h>
 #include <vlibapi/api.h>
 #include <vlibmemory/api.h>
-#include <vnet/lisp-cp/lisp_types.h>
 #include <vnet/qos/qos_types.h>
 
 #include <vnet/ethernet/ethernet.h>
@@ -250,26 +247,6 @@ static void *vl_api_sw_interface_set_vxlan_bypass_t_print
   u8 *s;
 
   s = format (0, "SCRIPT: sw_interface_set_vxlan_bypass ");
-
-  s = format (s, "sw_if_index %d ", (mp->sw_if_index));
-
-  if (mp->is_ipv6)
-    s = format (s, "ip6 ");
-
-  if (mp->enable)
-    s = format (s, "enable ");
-  else
-    s = format (s, "disable ");
-
-  FINISH;
-}
-
-static void *vl_api_sw_interface_set_geneve_bypass_t_print
-  (vl_api_sw_interface_set_geneve_bypass_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: sw_interface_set_geneve_bypass ");
 
   s = format (s, "sw_if_index %d ", (mp->sw_if_index));
 
@@ -579,18 +556,22 @@ static void *vl_api_tap_create_v2_t_print
     s = format (s, "rx-ring-size %u ", (mp->rx_ring_sz));
   if (mp->host_mtu_set)
     s = format (s, "host-mtu-size %u ", (mp->host_mtu_size));
-  if ((mp->tap_flags) & 0x1)
+  if ((mp->tap_flags) & TAP_API_FLAG_GSO)
     s = format (s, "gso-enabled ");
-  if ((mp->tap_flags) & 0x2)
+  if ((mp->tap_flags) & TAP_API_FLAG_CSUM_OFFLOAD)
     s = format (s, "csum-offload-enabled ");
-  if ((mp->tap_flags) & 0x4)
+  if ((mp->tap_flags) & TAP_API_FLAG_PERSIST)
     s = format (s, "persist ");
-  if ((mp->tap_flags) & 0x8)
+  if ((mp->tap_flags) & TAP_API_FLAG_ATTACH)
     s = format (s, "attach ");
-  if ((mp->tap_flags) & 0x16)
+  if ((mp->tap_flags) & TAP_API_FLAG_TUN)
     s = format (s, "tun ");
-  if ((mp->tap_flags) & 0x32)
+  if ((mp->tap_flags) & TAP_API_FLAG_GRO_COALESCE)
     s = format (s, "gro-coalesce-enabled ");
+  if ((mp->tap_flags) & TAP_API_FLAG_PACKED)
+    s = format (s, "packed ");
+  if ((mp->tap_flags) & TAP_API_FLAG_IN_ORDER)
+    s = format (s, "in-order ");
   FINISH;
 }
 
@@ -635,6 +616,37 @@ __clib_unused
     s = format (s, "gso-enabled ");
   if (mp->checksum_offload_enabled)
     s = format (s, "checksum_offload_enabled");
+  FINISH;
+}
+
+__clib_unused
+  static void *vl_api_virtio_pci_create_v2_t_print
+  (vl_api_virtio_pci_create_v2_t * mp, void *handle)
+{
+  u8 *s;
+  u8 null_mac[6];
+
+  clib_memset (null_mac, 0, sizeof (null_mac));
+
+  s = format (0, "SCRIPT: virtio_pci_create_v2 ");
+  s = format (s, "pci_addr %U ", format_vlib_pci_addr, (mp->pci_addr));
+  if (memcmp (mp->mac_address, null_mac, 6))
+    s = format (s, "mac-address %U ",
+		format_ethernet_address, mp->mac_address);
+  if (mp->features)
+    s = format (s, "features 0x%llx ", clib_net_to_host_u64 (mp->features));
+  if (mp->virtio_flags & VIRTIO_API_FLAG_GSO)
+    s = format (s, "gso-enabled ");
+  if (mp->virtio_flags & VIRTIO_API_FLAG_CSUM_OFFLOAD)
+    s = format (s, "checksum_offload_enabled ");
+  if ((mp->virtio_flags) & VIRTIO_API_FLAG_GRO_COALESCE)
+    s = format (s, "gro-coalesce-enabled ");
+  if ((mp->virtio_flags) & VIRTIO_API_FLAG_PACKED)
+    s = format (s, "packed ");
+  if ((mp->virtio_flags) & VIRTIO_API_FLAG_IN_ORDER)
+    s = format (s, "in-order ");
+  if ((mp->virtio_flags) & VIRTIO_API_FLAG_BUFFERING)
+    s = format (s, "buffering ");
   FINISH;
 }
 
@@ -684,6 +696,31 @@ static void *vl_api_bond_create_t_print
   FINISH;
 }
 
+static void *vl_api_bond_create2_t_print
+  (vl_api_bond_create2_t * mp, void *handle)
+{
+  u8 *s;
+  u8 null_mac[6];
+
+  clib_memset (null_mac, 0, sizeof (null_mac));
+
+  s = format (0, "SCRIPT: bond_create2 ");
+  if (memcmp (mp->mac_address, null_mac, 6))
+    s = format (s, "mac-address %U ",
+		format_ethernet_address, mp->mac_address);
+  if (mp->mode)
+    s = format (s, "mode %U ", format_bond_mode, ntohl (mp->mode));
+  if (mp->lb)
+    s = format (s, "lb %U ", format_bond_load_balance, ntohl (mp->lb));
+  if (mp->numa_only)
+    s = format (s, "numa-only ");
+  if (mp->enable_gso)
+    s = format (s, "gso ");
+  if (mp->id != ~0)
+    s = format (s, "id %u ", (mp->id));
+  FINISH;
+}
+
 static void *vl_api_bond_delete_t_print
   (vl_api_bond_delete_t * mp, void *handle)
 {
@@ -695,12 +732,12 @@ static void *vl_api_bond_delete_t_print
   FINISH;
 }
 
-static void *vl_api_bond_enslave_t_print
-  (vl_api_bond_enslave_t * mp, void *handle)
+static void *vl_api_bond_add_member_t_print
+  (vl_api_bond_add_member_t * mp, void *handle)
 {
   u8 *s;
 
-  s = format (0, "SCRIPT: bond_enslave ");
+  s = format (0, "SCRIPT: bond_add_member ");
   s = format (s, "bond_sw_if_index %u ", (mp->bond_sw_if_index));
   s = format (s, "sw_if_index %u ", (mp->sw_if_index));
   if (mp->is_passive)
@@ -723,33 +760,35 @@ static void *vl_api_sw_interface_set_bond_weight_t_print
   FINISH;
 }
 
-static void *vl_api_bond_detach_slave_t_print
-  (vl_api_bond_detach_slave_t * mp, void *handle)
+static void *vl_api_bond_detach_member_t_print
+  (vl_api_bond_detach_member_t * mp, void *handle)
 {
   u8 *s;
 
-  s = format (0, "SCRIPT: bond_detach_slave ");
+  s = format (0, "SCRIPT: bond_detach_member ");
   s = format (s, "sw_if_index %d ", (mp->sw_if_index));
 
   FINISH;
 }
 
-static void *vl_api_sw_interface_bond_dump_t_print
-  (vl_api_sw_interface_bond_dump_t * mp, void *handle)
+static void *vl_api_sw_bond_interface_dump_t_print
+  (vl_api_sw_bond_interface_dump_t * mp, void *handle)
 {
   u8 *s;
 
-  s = format (0, "SCRIPT: sw_interface_bond_dump ");
+  s = format (0, "SCRIPT: sw_bond_interface_dump ");
+  if (mp->sw_if_index != ~0)
+    s = format (s, "sw_if_index %d ", (mp->sw_if_index));
 
   FINISH;
 }
 
-static void *vl_api_sw_interface_slave_dump_t_print
-  (vl_api_sw_interface_slave_dump_t * mp, void *handle)
+static void *vl_api_sw_member_interface_dump_t_print
+  (vl_api_sw_member_interface_dump_t * mp, void *handle)
 {
   u8 *s;
 
-  s = format (0, "SCRIPT: sw_interface_slave_dump ");
+  s = format (0, "SCRIPT: sw_member_interface_dump ");
   s = format (s, "sw_if_index %d ", (mp->sw_if_index));
 
   FINISH;
@@ -1385,101 +1424,7 @@ static void *vl_api_add_node_next_t_print
 
   s = format (0, "SCRIPT: add_node_next ");
 
-  s = format (0, "node %s next %s ", mp->node_name, mp->next_name);
-
-  FINISH;
-}
-
-static void *vl_api_l2tpv3_create_tunnel_t_print
-  (vl_api_l2tpv3_create_tunnel_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: l2tpv3_create_tunnel ");
-
-  s = format (s, "client_address %U our_address %U ",
-	      format_ip6_address,
-	      (ip6_address_t *) (mp->client_address.un.ip6),
-	      format_ip6_address, (ip6_address_t *) (mp->our_address.un.ip6));
-  s = format (s, "local_session_id %d ", (mp->local_session_id));
-  s = format (s, "remote_session_id %d ", (mp->remote_session_id));
-  s = format (s, "local_cookie %lld ",
-	      clib_net_to_host_u64 (mp->local_cookie));
-  s = format (s, "remote_cookie %lld ",
-	      clib_net_to_host_u64 (mp->remote_cookie));
-  if (mp->l2_sublayer_present)
-    s = format (s, "l2-sublayer-present ");
-
-  FINISH;
-}
-
-static void *vl_api_l2tpv3_set_tunnel_cookies_t_print
-  (vl_api_l2tpv3_set_tunnel_cookies_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: l2tpv3_set_tunnel_cookies ");
-
-  s = format (s, "sw_if_index %d ", (mp->sw_if_index));
-
-  s = format (s, "new_local_cookie %llu ",
-	      clib_net_to_host_u64 (mp->new_local_cookie));
-
-  s = format (s, "new_remote_cookie %llu ",
-	      clib_net_to_host_u64 (mp->new_remote_cookie));
-
-  FINISH;
-}
-
-static void *vl_api_l2tpv3_interface_enable_disable_t_print
-  (vl_api_l2tpv3_interface_enable_disable_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: l2tpv3_interface_enable_disable ");
-
-  s = format (s, "sw_if_index %d ", (mp->sw_if_index));
-
-  if (mp->enable_disable == 0)
-    s = format (s, "del ");
-
-  FINISH;
-}
-
-static void *vl_api_l2tpv3_set_lookup_key_t_print
-  (vl_api_l2tpv3_set_lookup_key_t * mp, void *handle)
-{
-  u8 *s;
-  char *str = "unknown";
-
-  s = format (0, "SCRIPT: l2tpv3_set_lookup_key ");
-
-  switch (mp->key)
-    {
-    case L2T_LOOKUP_SRC_ADDRESS:
-      str = "lookup_v6_src";
-      break;
-    case L2T_LOOKUP_DST_ADDRESS:
-      str = "lookup_v6_dst";
-      break;
-    case L2T_LOOKUP_SESSION_ID:
-      str = "lookup_session_id";
-      break;
-    default:
-      break;
-    }
-
-  s = format (s, "%s ", str);
-
-  FINISH;
-}
-
-static void *vl_api_sw_if_l2tpv3_tunnel_dump_t_print
-  (vl_api_sw_if_l2tpv3_tunnel_dump_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: sw_if_l2tpv3_tunnel_dump ");
+  s = format (s, "node %s next %s ", mp->node_name, mp->next_name);
 
   FINISH;
 }
@@ -1590,52 +1535,6 @@ static void *vl_api_sw_interface_set_vxlan_gbp_bypass_t_print
   s = format (s, "sw_if_index %d ", (mp->sw_if_index));
   s = format (s, "%s ", (mp->is_ipv6 != 0) ? "ipv6" : "ipv4");
   s = format (s, "%s ", (mp->enable != 0) ? "enable" : "disable");
-
-  FINISH;
-}
-
-static void *vl_api_geneve_add_del_tunnel_t_print
-  (vl_api_geneve_add_del_tunnel_t * mp, void *handle)
-{
-  u8 *s;
-  s = format (0, "SCRIPT: geneve_add_del_tunnel ");
-
-  ip46_address_t local;
-  ip46_address_t remote;
-  ip_address_decode (&mp->remote_address, &remote);
-  ip_address_decode (&mp->local_address, &local);
-
-  u8 is_grp = ip46_address_is_multicast (&remote);
-  char *remote_name = is_grp ? "group" : "dst";
-
-  s = format (s, "src %U ", format_ip46_address, &local, IP46_TYPE_ANY);
-  s = format (s, "%s %U ", remote_name, format_ip46_address,
-	      &remote, IP46_TYPE_ANY);
-
-  if (is_grp)
-    s = format (s, "mcast_sw_if_index %d ", (mp->mcast_sw_if_index));
-
-  if (mp->encap_vrf_id)
-    s = format (s, "encap-vrf-id %d ", (mp->encap_vrf_id));
-
-  s = format (s, "decap-next %d ", (mp->decap_next_index));
-
-  s = format (s, "vni %d ", (mp->vni));
-
-  if (mp->is_add == 0)
-    s = format (s, "del ");
-
-  FINISH;
-}
-
-static void *vl_api_geneve_tunnel_dump_t_print
-  (vl_api_geneve_tunnel_dump_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: geneve_tunnel_dump ");
-
-  s = format (s, "sw_if_index %d ", (mp->sw_if_index));
 
   FINISH;
 }
@@ -1785,7 +1684,8 @@ static void *vl_api_sw_interface_vhost_user_dump_t_print
   u8 *s;
 
   s = format (0, "SCRIPT: sw_interface_vhost_user_dump ");
-  s = format (s, "sw_if_index %d ", (mp->sw_if_index));
+  if (mp->sw_if_index != ~0)
+    s = format (s, "sw_if_index %d ", (mp->sw_if_index));
 
   FINISH;
 }
@@ -2520,9 +2420,9 @@ static void *vl_api_pg_create_interface_t_print
   u8 *s;
 
   s = format (0, "SCRIPT: pg_create_interface ");
-  s = format (0, "if_id %d", (mp->interface_id));
-  s = format (0, "gso-enabled %u", mp->gso_enabled);
-  s = format (0, "gso-size %u", (mp->gso_size));
+  s = format (s, "if_id %d ", (mp->interface_id));
+  s = format (s, "gso-enabled %u ", mp->gso_enabled);
+  s = format (s, "gso-size %u", (mp->gso_size));
 
   FINISH;
 }
@@ -2533,8 +2433,8 @@ static void *vl_api_pg_capture_t_print
   u8 *s;
 
   s = format (0, "SCRIPT: pg_capture ");
-  s = format (0, "if_id %d ", (mp->interface_id));
-  s = format (0, "pcap %s", mp->pcap_file_name);
+  s = format (s, "if_id %d ", (mp->interface_id));
+  s = format (s, "pcap %s", mp->pcap_file_name);
   if (mp->count != ~0)
     s = format (s, "count %d ", (mp->count));
   if (!mp->is_enabled)
@@ -2558,6 +2458,21 @@ static void *vl_api_pg_enable_disable_t_print
 
   FINISH;
 }
+
+static void *vl_api_pg_interface_enable_disable_coalesce_t_print
+  (vl_api_pg_interface_enable_disable_coalesce_t * mp, void *handle)
+{
+  u8 *s;
+
+  s = format (0, "SCRIPT: pg_interface_enable_disable_coalesce ");
+  s = format (s, "sw_if_index %d ", (mp->sw_if_index));
+  if (!mp->coalesce_enabled)
+    s = format (s, "disable");
+  else
+    s = format (s, "enable");
+  FINISH;
+}
+
 
 static void *vl_api_ip_source_and_port_range_check_add_del_t_print
   (vl_api_ip_source_and_port_range_check_add_del_t * mp, void *handle)
@@ -2609,352 +2524,6 @@ static void *vl_api_ip_source_and_port_range_check_interface_add_del_t_print
   FINISH;
 }
 
-static void *vl_api_lisp_enable_disable_t_print
-  (vl_api_lisp_enable_disable_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_enable_disable %s",
-	      mp->is_enable ? "enable" : "disable");
-
-  FINISH;
-}
-
-static void *vl_api_gpe_add_del_iface_t_print
-  (vl_api_gpe_add_del_iface_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: gpe_add_del_iface ");
-
-  s = format (s, "%s ", mp->is_add ? "up" : "down");
-  s = format (s, "vni %d ", mp->vni);
-  s = format (s, "%s %d ", mp->is_l2 ? "bd_id" : "table_id", mp->dp_table);
-
-  FINISH;
-}
-
-static void *vl_api_lisp_pitr_set_locator_set_t_print
-  (vl_api_lisp_pitr_set_locator_set_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_pitr_set_locator_set ");
-
-  if (mp->is_add)
-    s = format (s, "locator-set %s ", mp->ls_name);
-  else
-    s = format (s, "del");
-
-  FINISH;
-}
-
-static u8 *
-format_lisp_flat_eid (u8 * s, va_list * args)
-{
-  u32 type = va_arg (*args, u32);
-  u8 *eid = va_arg (*args, u8 *);
-  u32 eid_len = va_arg (*args, u32);
-
-  switch (type)
-    {
-    case 0:
-      return format (s, "%U/%d", format_ip4_address, eid, eid_len);
-    case 1:
-      return format (s, "%U/%d", format_ip6_address, eid, eid_len);
-    case 3:
-      return format (s, "%U", format_ethernet_address, eid);
-    }
-  return 0;
-}
-
-static void *vl_api_lisp_add_del_remote_mapping_t_print
-  (vl_api_lisp_add_del_remote_mapping_t * mp, void *handle)
-{
-  u8 *s;
-  u32 rloc_num = 0;
-
-  s = format (0, "SCRIPT: lisp_add_del_remote_mapping ");
-
-  if (mp->del_all)
-    s = format (s, "del-all ");
-
-  s = format (s, "%s ", mp->is_add ? "add" : "del");
-  s = format (s, "vni %d ", (mp->vni));
-
-  s = format (s, "eid %U ", format_lisp_flat_eid, mp->deid);
-
-  if (mp->is_src_dst)
-    {
-      s = format (s, "seid %U ", format_lisp_flat_eid, mp->seid);
-    }
-  rloc_num = (mp->rloc_num);
-
-  if (0 == rloc_num)
-    s = format (s, "action %d", mp->action);
-
-  FINISH;
-}
-
-static void *vl_api_lisp_add_del_adjacency_t_print
-  (vl_api_lisp_add_del_adjacency_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_add_del_adjacency ");
-
-  s = format (s, "%s ", mp->is_add ? "add" : "del");
-  s = format (s, "vni %d ", (mp->vni));
-  s = format (s, "reid %U leid %U ",
-	      format_lisp_flat_eid, mp->reid, format_lisp_flat_eid, mp->leid);
-
-  FINISH;
-}
-
-static void *vl_api_lisp_add_del_map_request_itr_rlocs_t_print
-  (vl_api_lisp_add_del_map_request_itr_rlocs_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_add_del_map_request_itr_rlocs ");
-
-  if (mp->is_add)
-    s = format (s, "%s", mp->locator_set_name);
-  else
-    s = format (s, "del");
-
-  FINISH;
-}
-
-static void *vl_api_lisp_eid_table_add_del_map_t_print
-  (vl_api_lisp_eid_table_add_del_map_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_eid_table_add_del_map ");
-
-  if (!mp->is_add)
-    s = format (s, "del ");
-
-  s = format (s, "vni %d ", (mp->vni));
-  s = format (s, "%s %d ", mp->is_l2 ? "bd_index" : "vrf", (mp->dp_table));
-  FINISH;
-}
-
-static void *vl_api_lisp_add_del_local_eid_t_print
-  (vl_api_lisp_add_del_local_eid_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_add_del_local_eid ");
-
-  if (!mp->is_add)
-    s = format (s, "del ");
-
-  s = format (s, "vni %d ", (mp->vni));
-  s = format (s, "eid %U ", format_lisp_flat_eid, mp->eid);
-  s = format (s, "locator-set %s ", mp->locator_set_name);
-  if (mp->key.id)
-    {
-      u32 key_id = mp->key.id;
-      s = format (s, "key-id %U", format_hmac_key_id, key_id);
-      s = format (s, "secret-key %s", mp->key.key);
-    }
-  FINISH;
-}
-
-static void *vl_api_gpe_add_del_fwd_entry_t_print
-  (vl_api_gpe_add_del_fwd_entry_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: gpe_add_del_fwd_entry TODO");
-
-  FINISH;
-}
-
-static void *vl_api_lisp_add_del_map_resolver_t_print
-  (vl_api_lisp_add_del_map_resolver_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_add_del_map_resolver ");
-
-  if (!mp->is_add)
-    s = format (s, "del ");
-
-  if (mp->ip_address.af)
-    s = format (s, "%U ", format_ip6_address, mp->ip_address.un.ip6);
-  else
-    s = format (s, "%U ", format_ip4_address, mp->ip_address.un.ip4);
-
-  FINISH;
-}
-
-static void *vl_api_gpe_enable_disable_t_print
-  (vl_api_gpe_enable_disable_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: gpe_enable_disable ");
-
-  s = format (s, "%s ", mp->is_enable ? "enable" : "disable");
-
-  FINISH;
-}
-
-static void *vl_api_lisp_add_del_locator_set_t_print
-  (vl_api_lisp_add_del_locator_set_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_add_del_locator_set ");
-
-  if (!mp->is_add)
-    s = format (s, "del ");
-
-  s = format (s, "locator-set %s ", mp->locator_set_name);
-
-  FINISH;
-}
-
-static void *vl_api_lisp_add_del_locator_t_print
-  (vl_api_lisp_add_del_locator_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_add_del_locator ");
-
-  if (!mp->is_add)
-    s = format (s, "del ");
-
-  s = format (s, "locator-set %s ", mp->locator_set_name);
-  s = format (s, "sw_if_index %d ", mp->sw_if_index);
-  s = format (s, "p %d w %d ", mp->priority, mp->weight);
-
-  FINISH;
-}
-
-static void *vl_api_lisp_locator_set_dump_t_print
-  (vl_api_lisp_locator_set_dump_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_locator_set_dump ");
-  if (mp->filter == 1)
-    s = format (s, "local");
-  else if (mp->filter == 2)
-    s = format (s, "remote");
-
-  FINISH;
-}
-
-static void *vl_api_lisp_locator_dump_t_print
-  (vl_api_lisp_locator_dump_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_locator_dump ");
-  if (mp->is_index_set)
-    s = format (s, "ls_index %d", (mp->ls_index));
-  else
-    s = format (s, "ls_name %s", mp->ls_name);
-
-  FINISH;
-}
-
-static void *vl_api_lisp_map_request_mode_t_print
-  (vl_api_lisp_map_request_mode_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_map_request_mode ");
-
-  s = mp->is_src_dst ? format (s, "src-dst") : format (s, "dst-only");
-
-  FINISH;
-}
-
-static void *vl_api_lisp_eid_table_dump_t_print
-  (vl_api_lisp_eid_table_dump_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_eid_table_dump ");
-
-  if (mp->eid_set)
-    {
-      s = format (s, "vni %d ", (mp->vni));
-      s = format (s, "eid %U ", format_lisp_flat_eid, mp->eid);
-      switch (mp->filter)
-	{
-	case 1:
-	  s = format (s, "local ");
-	  break;
-	case 2:
-	  s = format (s, "remote ");
-	  break;
-	default:
-	  break;
-	}
-    }
-  FINISH;
-}
-
-static void *vl_api_lisp_rloc_probe_enable_disable_t_print
-  (vl_api_lisp_rloc_probe_enable_disable_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_rloc_probe_enable_disable ");
-  if (mp->is_enable)
-    s = format (s, "enable");
-  else
-    s = format (s, "disable");
-
-  FINISH;
-}
-
-static void *vl_api_lisp_map_register_enable_disable_t_print
-  (vl_api_lisp_map_register_enable_disable_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_map_register_enable_disable ");
-  if (mp->is_enable)
-    s = format (s, "enable");
-  else
-    s = format (s, "disable");
-
-  FINISH;
-}
-
-static void *vl_api_lisp_adjacencies_get_t_print
-  (vl_api_lisp_adjacencies_get_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_adjacencies_get ");
-  s = format (s, "vni %d", (mp->vni));
-
-  FINISH;
-}
-
-static void *vl_api_lisp_eid_table_map_dump_t_print
-  (vl_api_lisp_eid_table_map_dump_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lisp_eid_table_map_dump ");
-
-  if (mp->is_l2)
-    s = format (s, "l2");
-  else
-    s = format (s, "l3");
-
-  FINISH;
-}
-
 static void *vl_api_ipsec_tunnel_if_add_del_t_print
   (vl_api_ipsec_tunnel_if_add_del_t * mp, void *handle)
 {
@@ -2997,16 +2566,18 @@ static void *vl_api_ipsec_tunnel_if_add_del_t_print
   FINISH;
 }
 
+/* static u8 * */
+/* format_nsh_address_vat (u8 * s, va_list * args) */
+/* { */
+/*   nsh_t *a = va_arg (*args, nsh_t *); */
+/*   return format (s, "SPI:%d SI:%d", clib_net_to_host_u32 (a->spi), a->si); */
+/* } */
+
 static const char *policy_strs[] = {
   "BYPASS",
   "DISCARD",
   "RESOLVE",
   "PROTECT",
-};
-
-static const char *proto_strs[] = {
-  "ESP",
-  "AH",
 };
 
 static const char *algo_strs[] = {
@@ -3114,11 +2685,13 @@ static void *vl_api_ipsec_sad_entry_add_del_t_print
 
   ep = (vl_api_ipsec_sad_entry_t *) & mp->entry;
 
-  s = format (0, "SCRIPT: ipsec_sad_entry_add_del is_add ", mp->is_add);
+  s = format (0, "SCRIPT: ipsec_sad_entry_add_del is_add %d ", mp->is_add);
 
   tmp = (ep->protocol);
-  if (tmp < ARRAY_LEN (proto_strs))
-    protocol_str = proto_strs[tmp];
+  if (tmp == IPSEC_API_PROTO_ESP)
+    protocol_str = "ESP";
+  else if (tmp == IPSEC_API_PROTO_AH)
+    protocol_str = "AH";
 
   tmp = (ep->crypto_algorithm);
   if (tmp < ARRAY_LEN (algo_strs))
@@ -3392,47 +2965,6 @@ static void *vl_api_app_namespace_add_del_t_print
   FINISH;
 }
 
-static void *vl_api_sw_interface_set_lldp_t_print
-  (vl_api_sw_interface_set_lldp_t * mp, void *handle)
-{
-  u8 *s;
-  u8 null_data[256];
-
-  clib_memset (null_data, 0, sizeof (null_data));
-
-  s = format (0, "SCRIPT: sw_interface_set_lldp ");
-  s = format (s, "sw_if_index %d ", (mp->sw_if_index));
-
-  if (memcmp (&mp->port_desc, null_data, sizeof (mp->port_desc)))
-    s = format (s, "port_desc %s ", mp->port_desc);
-
-  if (memcmp (mp->mgmt_ip4, null_data, sizeof (mp->mgmt_ip4)))
-    s = format (s, "mgmt_ip4 %U ", format_ip4_address, mp->mgmt_ip4);
-
-  if (memcmp (mp->mgmt_ip6, null_data, sizeof (mp->mgmt_ip6)))
-    s = format (s, "mgmt_ip6 %U ", format_ip6_address, mp->mgmt_ip6);
-
-  if (memcmp (mp->mgmt_oid, null_data, sizeof (mp->mgmt_oid)))
-    s = format (s, "mgmt_oid %s ", mp->mgmt_oid);
-
-  if (mp->enable == 0)
-    s = format (s, "disable ");
-
-  FINISH;
-}
-
-static void *vl_api_lldp_config_t_print
-  (vl_api_lldp_config_t * mp, void *handle)
-{
-  u8 *s;
-
-  s = format (0, "SCRIPT: lldp_config ");
-  s = format (s, "system_name %s ", mp->system_name);
-  s = format (s, "tx_hold %d ", (mp->tx_hold));
-  s = format (s, "tx_interval %d ", (mp->tx_interval));
-  FINISH;
-}
-
 static void *vl_api_session_rule_add_del_t_print
   (vl_api_session_rule_add_del_t * mp, void *handle)
 {
@@ -3499,24 +3031,6 @@ static void * vl_api_ ## f ## _t_print          \
 foreach_no_print_function;
 #undef _
 
-#define foreach_custom_print_no_arg_function                            \
-_(lisp_eid_table_vni_dump)                                              \
-_(lisp_map_resolver_dump)                                               \
-_(lisp_map_server_dump)                                                 \
-_(show_lisp_rloc_probe_state)                                           \
-_(show_lisp_map_register_state)                                         \
-_(show_lisp_map_request_mode)
-
-#define _(f)                                                            \
-static void * vl_api_ ## f ## _t_print                                  \
-  (vl_api_ ## f ## _t * mp, void * handle)                              \
-{                                                                       \
-  u8 * s;                                                               \
-  s = format (0, "SCRIPT: " #f );                                       \
-  FINISH;                                                               \
-}
-foreach_custom_print_no_arg_function;
-#undef _
 #define foreach_custom_print_function                                   \
 _(CREATE_LOOPBACK, create_loopback)                                     \
 _(CREATE_LOOPBACK_INSTANCE, create_loopback_instance)                   \
@@ -3527,14 +3041,14 @@ _(SW_INTERFACE_SET_TABLE, sw_interface_set_table)                       \
 _(SW_INTERFACE_SET_MPLS_ENABLE, sw_interface_set_mpls_enable)           \
 _(SW_INTERFACE_SET_VPATH, sw_interface_set_vpath)                       \
 _(SW_INTERFACE_SET_VXLAN_BYPASS, sw_interface_set_vxlan_bypass)         \
-_(SW_INTERFACE_SET_GENEVE_BYPASS, sw_interface_set_geneve_bypass)       \
 _(BOND_CREATE, bond_create)                                             \
+_(BOND_CREATE2, bond_create2)                                           \
 _(BOND_DELETE, bond_delete)                                             \
-_(BOND_ENSLAVE, bond_enslave)                                           \
-_(BOND_DETACH_SLAVE, bond_detach_slave)                                 \
+_(BOND_ADD_MEMBER, bond_add_member)                                     \
+_(BOND_DETACH_MEMBER, bond_detach_member)                               \
 _(SW_INTERFACE_SET_BOND_WEIGHT, sw_interface_set_bond_weight)           \
-_(SW_INTERFACE_SLAVE_DUMP, sw_interface_slave_dump)                     \
-_(SW_INTERFACE_BOND_DUMP, sw_interface_bond_dump)                       \
+_(SW_MEMBER_INTERFACE_DUMP, sw_member_interface_dump)                   \
+_(SW_BOND_INTERFACE_DUMP, sw_bond_interface_dump)                       \
 _(SW_INTERFACE_RX_PLACEMENT_DUMP, sw_interface_rx_placement_dump)       \
 _(TAP_CREATE_V2, tap_create_v2)                                         \
 _(TAP_DELETE_V2, tap_delete_v2)                                         \
@@ -3575,16 +3089,9 @@ _(BRIDGE_DOMAIN_SET_MAC_AGE, bridge_domain_set_mac_age)                 \
 _(CLASSIFY_SET_INTERFACE_IP_TABLE, classify_set_interface_ip_table)	\
 _(CLASSIFY_SET_INTERFACE_L2_TABLES, classify_set_interface_l2_tables)	\
 _(ADD_NODE_NEXT, add_node_next)						\
-_(L2TPV3_CREATE_TUNNEL, l2tpv3_create_tunnel)                           \
-_(L2TPV3_SET_TUNNEL_COOKIES, l2tpv3_set_tunnel_cookies)                 \
-_(L2TPV3_INTERFACE_ENABLE_DISABLE, l2tpv3_interface_enable_disable)     \
-_(L2TPV3_SET_LOOKUP_KEY, l2tpv3_set_lookup_key)                         \
-_(SW_IF_L2TPV3_TUNNEL_DUMP, sw_if_l2tpv3_tunnel_dump)                   \
 _(VXLAN_ADD_DEL_TUNNEL, vxlan_add_del_tunnel)                           \
 _(VXLAN_TUNNEL_DUMP, vxlan_tunnel_dump)                                 \
 _(VXLAN_OFFLOAD_RX, vxlan_offload_rx)                                   \
-_(GENEVE_ADD_DEL_TUNNEL, geneve_add_del_tunnel)                         \
-_(GENEVE_TUNNEL_DUMP, geneve_tunnel_dump)                               \
 _(GRE_TUNNEL_ADD_DEL, gre_tunnel_add_del)                               \
 _(GRE_TUNNEL_DUMP, gre_tunnel_dump)                                     \
 _(L2_FIB_CLEAR_TABLE, l2_fib_clear_table)                               \
@@ -3641,6 +3148,7 @@ _(GET_NEXT_INDEX, get_next_index)                                       \
 _(PG_CREATE_INTERFACE,pg_create_interface)                              \
 _(PG_CAPTURE, pg_capture)                                               \
 _(PG_ENABLE_DISABLE, pg_enable_disable)                                 \
+_(PG_INTERFACE_ENABLE_DISABLE_COALESCE, pg_interface_enable_disable_coalesce) \
 _(POLICER_ADD_DEL, policer_add_del)                                     \
 _(POLICER_DUMP, policer_dump)                                           \
 _(POLICER_CLASSIFY_SET_INTERFACE, policer_classify_set_interface)       \
@@ -3649,34 +3157,6 @@ _(IP_SOURCE_AND_PORT_RANGE_CHECK_ADD_DEL,                               \
   ip_source_and_port_range_check_add_del)                               \
 _(IP_SOURCE_AND_PORT_RANGE_CHECK_INTERFACE_ADD_DEL,                     \
   ip_source_and_port_range_check_interface_add_del)                     \
-_(LISP_ENABLE_DISABLE, lisp_enable_disable)                             \
-_(GPE_ENABLE_DISABLE, gpe_enable_disable)                               \
-_(GPE_ADD_DEL_IFACE, gpe_add_del_iface)                                 \
-_(LISP_PITR_SET_LOCATOR_SET, lisp_pitr_set_locator_set)                 \
-_(LISP_MAP_REQUEST_MODE, lisp_map_request_mode)                         \
-_(SHOW_LISP_MAP_REQUEST_MODE, show_lisp_map_request_mode)               \
-_(LISP_ADD_DEL_REMOTE_MAPPING, lisp_add_del_remote_mapping)             \
-_(LISP_ADD_DEL_ADJACENCY, lisp_add_del_adjacency)                       \
-_(LISP_ADD_DEL_MAP_REQUEST_ITR_RLOCS,                                   \
-  lisp_add_del_map_request_itr_rlocs)                                   \
-_(LISP_EID_TABLE_ADD_DEL_MAP, lisp_eid_table_add_del_map)               \
-_(LISP_ADD_DEL_LOCAL_EID, lisp_add_del_local_eid)                       \
-_(GPE_ADD_DEL_FWD_ENTRY, gpe_add_del_fwd_entry)                         \
-_(LISP_ADD_DEL_LOCATOR_SET, lisp_add_del_locator_set)                   \
-_(LISP_ADD_DEL_MAP_RESOLVER, lisp_add_del_map_resolver)                 \
-_(LISP_ADD_DEL_LOCATOR, lisp_add_del_locator)                           \
-_(LISP_EID_TABLE_DUMP, lisp_eid_table_dump)                             \
-_(LISP_EID_TABLE_MAP_DUMP, lisp_eid_table_map_dump)                     \
-_(LISP_EID_TABLE_VNI_DUMP, lisp_eid_table_vni_dump)                     \
-_(LISP_MAP_RESOLVER_DUMP, lisp_map_resolver_dump)                       \
-_(LISP_MAP_SERVER_DUMP, lisp_map_server_dump)                           \
-_(LISP_LOCATOR_SET_DUMP, lisp_locator_set_dump)                         \
-_(LISP_LOCATOR_DUMP, lisp_locator_dump)                                 \
-_(LISP_ADJACENCIES_GET, lisp_adjacencies_get)                           \
-_(SHOW_LISP_RLOC_PROBE_STATE, show_lisp_rloc_probe_state)               \
-_(SHOW_LISP_MAP_REGISTER_STATE, show_lisp_map_register_state)           \
-_(LISP_RLOC_PROBE_ENABLE_DISABLE, lisp_rloc_probe_enable_disable)       \
-_(LISP_MAP_REGISTER_ENABLE_DISABLE, lisp_map_register_enable_disable)   \
 _(IPSEC_INTERFACE_ADD_DEL_SPD, ipsec_interface_add_del_spd)		\
 _(IPSEC_SAD_ENTRY_ADD_DEL, ipsec_sad_entry_add_del)			\
 _(IPSEC_SPD_ADD_DEL, ipsec_spd_add_del)					\
@@ -3700,8 +3180,6 @@ _(P2P_ETHERNET_ADD, p2p_ethernet_add)                                   \
 _(P2P_ETHERNET_DEL, p2p_ethernet_del)					\
 _(TCP_CONFIGURE_SRC_ADDRESSES, tcp_configure_src_addresses)		\
 _(APP_NAMESPACE_ADD_DEL, app_namespace_add_del)                         \
-_(LLDP_CONFIG, lldp_config)                                             \
-_(SW_INTERFACE_SET_LLDP, sw_interface_set_lldp)				\
 _(SESSION_RULE_ADD_DEL, session_rule_add_del)                           \
 _(OUTPUT_ACL_SET_INTERFACE, output_acl_set_interface)                   \
 _(QOS_RECORD_ENABLE_DISABLE, qos_record_enable_disable)			\

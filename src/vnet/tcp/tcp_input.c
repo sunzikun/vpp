@@ -164,7 +164,7 @@ tcp_handle_rst (tcp_connection_t * tc)
       tcp_connection_cleanup (tc);
       break;
     case TCP_STATE_SYN_SENT:
-      session_stream_connect_notify (&tc->connection, 1 /* fail */ );
+      session_stream_connect_notify (&tc->connection, SESSION_E_REFUSED);
       tcp_connection_cleanup (tc);
       break;
     case TCP_STATE_ESTABLISHED:
@@ -215,6 +215,7 @@ tcp_rcv_rst (tcp_worker_ctx_t * wrk, tcp_connection_t * tc)
       break;
     case TCP_STATE_SYN_SENT:
       /* Do not program ntf because the connection is half-open */
+      tc->rst_state = tc->state;
       tcp_handle_rst (tc);
       break;
     case TCP_STATE_ESTABLISHED:
@@ -403,7 +404,7 @@ tcp_rcv_ack_no_cc (tcp_connection_t * tc, vlib_buffer_t * b, u32 * error)
   if (!(seq_leq (tc->snd_una, vnet_buffer (b)->tcp.ack_number)
 	&& seq_leq (vnet_buffer (b)->tcp.ack_number, tc->snd_nxt)))
     {
-      if (seq_leq (vnet_buffer (b)->tcp.ack_number, tc->snd_una_max)
+      if (seq_leq (vnet_buffer (b)->tcp.ack_number, tc->snd_nxt)
 	  && seq_gt (vnet_buffer (b)->tcp.ack_number, tc->snd_una))
 	{
 	  tc->snd_nxt = vnet_buffer (b)->tcp.ack_number;
@@ -423,45 +424,50 @@ acceptable:
 /**
  * Compute smoothed RTT as per VJ's '88 SIGCOMM and RFC6298
  *
- * Note that although the original article, srtt and rttvar are scaled
+ * Note that although in the original article srtt and rttvar are scaled
  * to minimize round-off errors, here we don't. Instead, we rely on
  * better precision time measurements.
  *
- * TODO support us rtt resolution
+ * A known limitation of the algorithm is that a drop in rtt results in a
+ * rttvar increase and bigger RTO.
+ *
+ * mrtt must be provided in @ref TCP_TICK multiples, i.e., in us. Note that
+ * timestamps are measured as ms ticks so they must be converted before
+ * calling this function.
  */
 static void
 tcp_estimate_rtt (tcp_connection_t * tc, u32 mrtt)
 {
   int err, diff;
 
-  if (tc->srtt != 0)
-    {
-      err = mrtt - tc->srtt;
+  err = mrtt - tc->srtt;
+  tc->srtt = clib_max ((int) tc->srtt + (err >> 3), 1);
+  diff = (clib_abs (err) - (int) tc->rttvar) >> 2;
+  tc->rttvar = clib_max ((int) tc->rttvar + diff, 1);
+}
 
-      /* XXX Drop in RTT results in RTTVAR increase and bigger RTO.
-       * The increase should be bound */
-      tc->srtt = clib_max ((int) tc->srtt + (err >> 3), 1);
-      diff = (clib_abs (err) - (int) tc->rttvar) >> 2;
-      tc->rttvar = clib_max ((int) tc->rttvar + diff, 1);
-    }
-  else
-    {
-      /* First measurement. */
-      tc->srtt = mrtt;
-      tc->rttvar = mrtt >> 1;
-    }
+static inline void
+tcp_estimate_rtt_us (tcp_connection_t * tc, f64 mrtt)
+{
+  tc->mrtt_us = tc->mrtt_us + (mrtt - tc->mrtt_us) * 0.125;
 }
 
 /**
- * Update RTT estimate and RTO timer
+ * Update rtt estimate
  *
- * Measure RTT: We have two sources of RTT measurements: TSOPT and ACK
- * timing. Middle boxes are known to fiddle with TCP options so we
- * should give higher priority to ACK timing.
+ * We have potentially three sources of rtt measurements:
  *
- * This should be called only if previously sent bytes have been acked.
+ * TSOPT	difference between current and echoed timestamp. It has ms
+ * 	    	precision and can be computed per ack
+ * ACK timing	one sequence number is tracked per rtt with us (micro second)
+ * 		precision.
+ * rate sample	if enabled, all outstanding bytes are tracked with us
+ * 		precision. Every ack and sack are a rtt sample
  *
- * return 1 if valid rtt 0 otherwise
+ * Middle boxes are known to fiddle with TCP options so we give higher
+ * priority to ACK timing.
+ *
+ * For now, rate sample rtts are only used under congestion.
  */
 static int
 tcp_update_rtt (tcp_connection_t * tc, tcp_rate_sample_t * rs, u32 ack)
@@ -473,19 +479,19 @@ tcp_update_rtt (tcp_connection_t * tc, tcp_rate_sample_t * rs, u32 ack)
   if (tcp_in_cong_recovery (tc))
     {
       /* Accept rtt estimates for samples that have not been retransmitted */
-      if ((tc->cfg_flags & TCP_CFG_F_RATE_SAMPLE)
-	  && !(rs->flags & TCP_BTS_IS_RXT))
-	{
-	  mrtt = rs->rtt_time * THZ;
-	  goto estimate_rtt;
-	}
-      goto done;
+      if (!(tc->cfg_flags & TCP_CFG_F_RATE_SAMPLE)
+	  || (rs->flags & TCP_BTS_IS_RXT))
+	goto done;
+      if (rs->rtt_time)
+	tcp_estimate_rtt_us (tc, rs->rtt_time);
+      mrtt = rs->rtt_time * THZ;
+      goto estimate_rtt;
     }
 
   if (tc->rtt_ts && seq_geq (ack, tc->rtt_seq))
     {
       f64 sample = tcp_time_now_us (tc->c_thread_index) - tc->rtt_ts;
-      tc->mrtt_us = tc->mrtt_us + (sample - tc->mrtt_us) * 0.125;
+      tcp_estimate_rtt_us (tc, sample);
       mrtt = clib_max ((u32) (sample * THZ), 1);
       /* Allow measuring of a new RTT */
       tc->rtt_ts = 0;
@@ -495,8 +501,8 @@ tcp_update_rtt (tcp_connection_t * tc, tcp_rate_sample_t * rs, u32 ack)
    * seq_lt (tc->snd_una, ack). This is a condition for calling update_rtt */
   else if (tcp_opts_tstamp (&tc->rcv_opts) && tc->rcv_opts.tsecr)
     {
-      u32 now = tcp_tstamp (tc);
-      mrtt = clib_max (now - tc->rcv_opts.tsecr, 1);
+      mrtt = clib_max (tcp_tstamp (tc) - tc->rcv_opts.tsecr, 1);
+      mrtt *= TCP_TSTP_TO_HZ;
     }
 
 estimate_rtt:
@@ -532,8 +538,8 @@ tcp_estimate_initial_rtt (tcp_connection_t * tc)
     }
   else
     {
-      mrtt = tcp_time_now_w_thread (thread_index) - tc->rcv_opts.tsecr;
-      mrtt = clib_max (mrtt, 1);
+      mrtt = tcp_tstamp (tc) - tc->rcv_opts.tsecr;
+      mrtt = clib_max (mrtt, 1) * TCP_TSTP_TO_HZ;
       /* Due to retransmits we don't know the initial mrtt */
       if (tc->rto_boff && mrtt > 1 * THZ)
 	mrtt = 1 * THZ;
@@ -541,7 +547,11 @@ tcp_estimate_initial_rtt (tcp_connection_t * tc)
     }
 
   if (mrtt > 0 && mrtt < TCP_RTT_MAX)
-    tcp_estimate_rtt (tc, mrtt);
+    {
+      /* First measurement as per RFC 6298 */
+      tc->srtt = mrtt;
+      tc->rttvar = mrtt >> 1;
+    }
   tcp_update_rto (tc);
 }
 
@@ -570,7 +580,7 @@ tcp_handle_postponed_dequeues (tcp_worker_ctx_t * wrk)
 
       /* Dequeue the newly ACKed bytes */
       session_tx_fifo_dequeue_drop (&tc->connection, tc->burst_acked);
-      tcp_validate_txf_size (tc, tc->snd_una_max - tc->snd_una);
+      tcp_validate_txf_size (tc, tc->snd_nxt - tc->snd_una);
 
       if (PREDICT_FALSE (tc->flags & TCP_CONN_PSH_PENDING))
 	{
@@ -679,7 +689,7 @@ tcp_cc_init_congestion (tcp_connection_t * tc)
    * three segments that have left the network and should've been
    * buffered at the receiver XXX */
   if (!tcp_opts_sack_permitted (&tc->rcv_opts))
-    tc->cwnd += 3 * tc->snd_mss;
+    tc->cwnd += TCP_DUPACK_THRESHOLD * tc->snd_mss;
 
   tc->fr_occurences += 1;
   TCP_EVT (TCP_EVT_CC_EVT, tc, 4);
@@ -711,14 +721,6 @@ tcp_cc_is_spurious_retransmit (tcp_connection_t * tc)
 }
 
 static inline u8
-tcp_should_fastrecover_sack (tcp_connection_t * tc)
-{
-  return (tc->sack_sb.lost_bytes
-	  || ((TCP_DUPACK_THRESHOLD - 1) * tc->snd_mss
-	      < tc->sack_sb.sacked_bytes));
-}
-
-static inline u8
 tcp_should_fastrecover (tcp_connection_t * tc, u8 has_sack)
 {
   if (!has_sack)
@@ -742,8 +744,7 @@ tcp_should_fastrecover (tcp_connection_t * tc, u8 has_sack)
 	  return 0;
 	}
     }
-  return ((tc->rcv_dupacks == TCP_DUPACK_THRESHOLD)
-	  || tcp_should_fastrecover_sack (tc));
+  return tc->sack_sb.lost_bytes || tc->rcv_dupacks >= tc->sack_sb.reorder;
 }
 
 static int
@@ -998,7 +999,7 @@ tcp_rcv_ack (tcp_worker_ctx_t * wrk, tcp_connection_t * tc, vlib_buffer_t * b,
     {
       /* We've probably entered recovery and the peer still has some
        * of the data we've sent. Update snd_nxt and accept the ack */
-      if (seq_leq (vnet_buffer (b)->tcp.ack_number, tc->snd_una_max)
+      if (seq_leq (vnet_buffer (b)->tcp.ack_number, tc->snd_nxt)
 	  && seq_gt (vnet_buffer (b)->tcp.ack_number, tc->snd_una))
 	{
 	  tc->snd_nxt = vnet_buffer (b)->tcp.ack_number;
@@ -1048,10 +1049,11 @@ process_ack:
   if (tc->cfg_flags & TCP_CFG_F_RATE_SAMPLE)
     tcp_bt_sample_delivery_rate (tc, &rs);
 
-  if (tc->bytes_acked)
+  if (tc->bytes_acked + tc->sack_sb.last_sacked_bytes)
     {
-      tcp_program_dequeue (wrk, tc);
       tcp_update_rtt (tc, &rs, vnet_buffer (b)->tcp.ack_number);
+      if (tc->bytes_acked)
+	tcp_program_dequeue (wrk, tc);
     }
 
   TCP_EVT (TCP_EVT_ACK_RCVD, tc);
@@ -1252,26 +1254,6 @@ tcp_session_enqueue_ooo (tcp_connection_t * tc, vlib_buffer_t * b,
   return TCP_ERROR_ENQUEUED_OOO;
 }
 
-/**
- * Check if ACK could be delayed. If ack can be delayed, it should return
- * true for a full frame. If we're always acking return 0.
- */
-always_inline int
-tcp_can_delack (tcp_connection_t * tc)
-{
-  /* Send ack if ... */
-  if (TCP_ALWAYS_ACK
-      /* just sent a rcv wnd 0
-         || (tc->flags & TCP_CONN_SENT_RCV_WND0) != 0 */
-      /* constrained to send ack */
-      || (tc->flags & TCP_CONN_SNDACK) != 0
-      /* we're almost out of tx wnd */
-      || tcp_available_cc_snd_space (tc) < 4 * tc->snd_mss)
-    return 0;
-
-  return 1;
-}
-
 static int
 tcp_buffer_discard_bytes (vlib_buffer_t * b, u32 n_bytes_to_drop)
 {
@@ -1360,14 +1342,6 @@ in_order:
   /* In order data, enqueue. Fifo figures out by itself if any out-of-order
    * segments can be enqueued after fifo tail offset changes. */
   error = tcp_session_enqueue_data (tc, b, n_data_bytes);
-  if (tcp_can_delack (tc))
-    {
-      if (!tcp_timer_is_active (tc, TCP_TIMER_DELACK))
-	tcp_timer_set (&wrk->timer_wheel, tc, TCP_TIMER_DELACK,
-		       tcp_cfg.delack_time);
-      goto done;
-    }
-
   tcp_program_ack (tc);
 
 done:
@@ -2601,6 +2575,12 @@ tcp46_listen_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	  lc = tcp_lookup_listener (b, tc->c_fib_index, is_ip4);
 	  /* clean up the old session */
 	  tcp_connection_del (tc);
+	  /* listener was cleaned up */
+	  if (!lc)
+	    {
+	      error = TCP_ERROR_NO_LISTENER;
+	      goto done;
+	    }
 	}
 
       /* Make sure connection wasn't just created */
@@ -2647,6 +2627,13 @@ tcp46_listen_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
       tcp_connection_init_vars (child);
       child->rto = TCP_RTO_MIN;
 
+      /*
+       * This initializes elog track, must be done before synack.
+       * We also do it before possible tcp_connection_cleanup() as it
+       * generates TCP_EVT_DELETE event.
+       */
+      TCP_EVT (TCP_EVT_SYN_RCVD, child, 1);
+
       if (session_stream_accept (&child->connection, lc->c_s_index,
 				 lc->c_thread_index, 0 /* notify */ ))
 	{
@@ -2659,18 +2646,12 @@ tcp46_listen_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 
       tcp_send_synack (child);
 
-      TCP_EVT (TCP_EVT_SYN_RCVD, child, 1);
-
     done:
 
       if (PREDICT_FALSE (b->flags & VLIB_BUFFER_IS_TRACED))
 	{
-	  tcp_rx_trace_t *t;
-	  t = vlib_add_trace (vm, node, b, sizeof (*t));
-	  clib_memcpy_fast (&t->tcp_header, tcp_buffer_hdr (b),
-			    sizeof (t->tcp_header));
-	  clib_memcpy_fast (&t->tcp_connection, lc,
-			    sizeof (t->tcp_connection));
+	  tcp_rx_trace_t *t = vlib_add_trace (vm, node, b, sizeof (*t));
+	  tcp_set_rx_trace_data (t, lc, tcp_buffer_hdr (b), b, is_ip4);
 	}
 
       n_syns += (error == TCP_ERROR_NONE);
@@ -3235,12 +3216,14 @@ do {                                                       	\
   _(FIN_WAIT_2, TCP_FLAG_RST, TCP_INPUT_NEXT_RCV_PROCESS, TCP_ERROR_NONE);
   _(FIN_WAIT_2, TCP_FLAG_RST | TCP_FLAG_ACK, TCP_INPUT_NEXT_RCV_PROCESS,
     TCP_ERROR_NONE);
+  _(FIN_WAIT_2, TCP_FLAG_SYN, TCP_INPUT_NEXT_RCV_PROCESS, TCP_ERROR_NONE);
   _(CLOSE_WAIT, TCP_FLAG_ACK, TCP_INPUT_NEXT_RCV_PROCESS, TCP_ERROR_NONE);
   _(CLOSE_WAIT, TCP_FLAG_FIN | TCP_FLAG_ACK, TCP_INPUT_NEXT_RCV_PROCESS,
     TCP_ERROR_NONE);
   _(CLOSE_WAIT, TCP_FLAG_RST, TCP_INPUT_NEXT_RCV_PROCESS, TCP_ERROR_NONE);
   _(CLOSE_WAIT, TCP_FLAG_RST | TCP_FLAG_ACK, TCP_INPUT_NEXT_RCV_PROCESS,
     TCP_ERROR_NONE);
+  _(CLOSE_WAIT, TCP_FLAG_SYN, TCP_INPUT_NEXT_RCV_PROCESS, TCP_ERROR_NONE);
   _(LAST_ACK, 0, TCP_INPUT_NEXT_DROP, TCP_ERROR_SEGMENT_INVALID);
   _(LAST_ACK, TCP_FLAG_ACK, TCP_INPUT_NEXT_RCV_PROCESS, TCP_ERROR_NONE);
   _(LAST_ACK, TCP_FLAG_FIN, TCP_INPUT_NEXT_RCV_PROCESS, TCP_ERROR_NONE);

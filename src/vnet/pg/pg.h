@@ -45,6 +45,8 @@
 #include <vppinfra/fifo.h>	/* for buffer_fifo */
 #include <vppinfra/pcap.h>
 #include <vnet/interface.h>
+#include <vnet/ethernet/mac_address.h>
+#include <vnet/gso/gro.h>
 
 extern vnet_device_class_t pg_dev_class;
 
@@ -305,10 +307,14 @@ typedef struct
   /* Identifies stream for this interface. */
   u32 id;
 
+  u8 coalesce_enabled;
+  gro_flow_table_t *flow_table;
   u8 gso_enabled;
   u32 gso_size;
   pcap_main_t pcap_main;
   char *pcap_file_name;
+
+  mac_address_t *allowed_mcast_macs;
 } pg_interface_t;
 
 /* Per VLIB node data. */
@@ -332,6 +338,7 @@ typedef struct pg_main_t
   /* Pool of interfaces. */
   pg_interface_t *interfaces;
   uword *if_index_by_if_id;
+  uword *if_id_by_sw_if_index;
 
   /* Vector of buffer indices for use in pg_stream_fill_replay, per thread */
   u32 **replay_buffers_by_thread;
@@ -358,9 +365,14 @@ void pg_stream_change (pg_main_t * pg, pg_stream_t * s);
 void pg_stream_enable_disable (pg_main_t * pg, pg_stream_t * s,
 			       int is_enable);
 
+/* Enable/disable packet coalesce on given interface */
+void pg_interface_enable_disable_coalesce (pg_interface_t * pi, u8 enable,
+					   u32 tx_node_index);
+
 /* Find/create free packet-generator interface index. */
 u32 pg_interface_add_or_get (pg_main_t * pg, uword stream_index,
-			     u8 gso_enabled, u32 gso_size);
+			     u8 gso_enabled, u32 gso_size,
+			     u8 coalesce_enabled);
 
 always_inline pg_node_t *
 pg_get_node (uword node_index)
@@ -390,8 +402,8 @@ clib_error_t *pg_capture (pg_capture_args_t * a);
 
 typedef struct
 {
-  vlib_buffer_t buffer;
   u32 buffer_index;
+  vlib_buffer_t buffer;
 }
 pg_output_trace_t;
 

@@ -59,7 +59,7 @@ cat >crccheck.api <<EOL
 option version="1.0.0";
 autoreply define crccheck
 {
-  option deprecated="v20.11";
+  option deprecated;
   bool foo;
 };
 EOL
@@ -74,6 +74,29 @@ autoreply define crccheck_2
 };
 EOL
 git add crccheck.api
+git commit -m "deprecated api";
+extras/scripts/crcchecker.py --check-patchset
+
+echo "TEST 7.1: Verify we can delete deprecated message (old/confused style)"
+cat >crccheck_dep.api <<EOL
+option version="1.0.0";
+autoreply define crccheck
+{
+  option status="deprecated";
+  bool foo;
+};
+EOL
+git add crccheck_dep.api
+git commit -m "deprecated api";
+# delete API
+cat >crccheck_dep.api <<EOL
+option version="1.0.0";
+autoreply define crccheck_2
+{
+  bool foo;
+};
+EOL
+git add crccheck_dep.api
 git commit -m "deprecated api";
 extras/scripts/crcchecker.py --check-patchset
 
@@ -107,6 +130,13 @@ git add crccheck.api
 git commit -m "renamed in-progress api";
 extras/scripts/crcchecker.py --check-patchset
 
+echo "TEST11.1: Switch to new designation of in-progress API"
+sed -i -e 's/status="in_progress"/in_progress/g' crccheck.api
+git add crccheck.api
+git commit -m "new designation of in-progress api";
+extras/scripts/crcchecker.py --check-patchset
+
+
 echo "TEST12: Verify we can add a field to an in-progress API"
 sed -i -e 's/foobar;/foobar; bool new_baz;/g' crccheck.api
 git add crccheck.api
@@ -128,6 +158,17 @@ verify_check_patchset_fails
 
 # get rid of the "erroneous" commit in the previous test
 git reset --hard HEAD~1
+
+echo "TEST14: Verify we handle new .api file"
+cat >crccheck3.api <<EOL
+autoreply define foo
+{
+  bool bar;
+};
+EOL
+git add crccheck3.api
+git commit -m "a new message in new file";
+extras/scripts/crcchecker.py --check-patchset
 
 echo "TEST: All tests got the expected result, cleaning up."
 

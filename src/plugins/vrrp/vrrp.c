@@ -140,40 +140,75 @@ vrrp_vr_transition_intf (vrrp_vr_t * vr, vrrp_vr_state_t new_state)
 {
   vrrp_intf_t *intf;
   const char *arc_name = 0, *node_name = 0;
+  const char *mc_arc_name = 0, *mc_node_name = 0;
   u8 is_ipv6 = vrrp_vr_is_ipv6 (vr);
-
-  /* only need to do something if entering or leaving master state */
-  if ((vr->runtime.state != VRRP_VR_STATE_MASTER) &&
-      (new_state != VRRP_VR_STATE_MASTER))
-    return;
+  u32 *vr_index;
+  int n_master_accept = 0;
+  int n_started = 0;
 
   if (is_ipv6)
     {
       arc_name = "ip6-local";
       node_name = "vrrp6-nd-input";
+      mc_arc_name = "ip6-multicast";
+      mc_node_name = "vrrp6-accept-owner-input";
     }
   else
     {
       arc_name = "arp";
       node_name = "vrrp4-arp-input";
+      mc_arc_name = "ip4-multicast";
+      mc_node_name = "vrrp4-accept-owner-input";
     }
 
   intf = vrrp_intf_get (vr->config.sw_if_index);
-  if (new_state == VRRP_VR_STATE_MASTER)
+
+  /* Check other VRs on this intf to see if features need to be toggled */
+  vec_foreach (vr_index, intf->vr_indices[is_ipv6])
+  {
+    vrrp_vr_t *intf_vr = vrrp_vr_lookup_index (*vr_index);
+
+    if (intf_vr == vr)
+      continue;
+
+    if (intf_vr->runtime.state == VRRP_VR_STATE_INIT)
+      continue;
+
+    n_started++;
+
+    if ((intf_vr->runtime.state == VRRP_VR_STATE_MASTER) &&
+	vrrp_vr_accept_mode_enabled (intf_vr))
+      n_master_accept++;
+  }
+
+  /* If entering/leaving init state, start/stop ARP or ND feature if no other
+   * VRs are active on the interface.
+   */
+  if (((vr->runtime.state == VRRP_VR_STATE_INIT) ||
+       (new_state == VRRP_VR_STATE_INIT)) && (n_started == 0))
+    vnet_feature_enable_disable (arc_name, node_name,
+				 vr->config.sw_if_index,
+				 (new_state != VRRP_VR_STATE_INIT), NULL, 0);
+
+  /* Special housekeeping when entering/leaving master mode */
+  if ((vr->runtime.state == VRRP_VR_STATE_MASTER) ||
+      (new_state == VRRP_VR_STATE_MASTER))
     {
-      intf->n_master_vrs[is_ipv6]++;
-      if (intf->n_master_vrs[is_ipv6] == 1)
-	vnet_feature_enable_disable (arc_name, node_name,
-				     vr->config.sw_if_index, 1, NULL, 0);
-    }
-  else
-    {
-      if (intf->n_master_vrs[is_ipv6] == 1)
-	vnet_feature_enable_disable (arc_name, node_name,
-				     vr->config.sw_if_index, 0, NULL, 0);
-      /* If the count were already 0, leave it at 0 */
-      if (intf->n_master_vrs[is_ipv6])
+      /* Maintain count of master state VRs on interface */
+      if (new_state == VRRP_VR_STATE_MASTER)
+	intf->n_master_vrs[is_ipv6]++;
+      else if (intf->n_master_vrs[is_ipv6] > 0)
 	intf->n_master_vrs[is_ipv6]--;
+
+      /* If accept mode is enabled and no other master on intf has accept
+       * mode enabled, enable/disable feature node to avoid spurious drops by
+       * spoofing check.
+       */
+      if (vrrp_vr_accept_mode_enabled (vr) && !n_master_accept)
+	vnet_feature_enable_disable (mc_arc_name, mc_node_name,
+				     vr->config.sw_if_index,
+				     (new_state == VRRP_VR_STATE_MASTER),
+				     NULL, 0);
     }
 }
 
@@ -310,11 +345,13 @@ vrrp_vr_transition (vrrp_vr_t * vr, vrrp_vr_state_t new_state, void *data)
   /* add/delete virtual IP addrs if accept_mode is true */
   vrrp_vr_transition_addrs (vr, new_state);
 
-  /* enable/disable arp/ND input features if necessary */
+  /* enable/disable input features if necessary */
   vrrp_vr_transition_intf (vr, new_state);
 
   /* add/delete virtual MAC address on NIC if necessary */
   vrrp_vr_transition_vmac (vr, new_state);
+
+  vrrp_vr_event (vr, new_state);
 
   vr->runtime.state = new_state;
 }
@@ -347,8 +384,10 @@ static int
 vrrp_intf_enable_disable_mcast (u8 enable, u32 sw_if_index, u8 is_ipv6)
 {
   vrrp_main_t *vrm = &vrrp_main;
+  vrrp_vr_t *vr;
   vrrp_intf_t *intf;
   u32 fib_index;
+  u32 n_vrs = 0;
   const mfib_prefix_t *vrrp_prefix;
   fib_protocol_t proto;
   vnet_link_t link_type;
@@ -383,9 +422,18 @@ vrrp_intf_enable_disable_mcast (u8 enable, u32 sw_if_index, u8 is_ipv6)
   via_itf.frp_proto = fib_proto_to_dpo (proto);
   fib_index = mfib_table_get_index_for_sw_if_index (proto, sw_if_index);
 
+  /* *INDENT-OFF* */
+  pool_foreach (vr, vrm->vrs,
+  ({
+    if (vrrp_vr_is_ipv6 (vr) == is_ipv6)
+      n_vrs++;
+  }));
+  /* *INDENT-ON* */
+
   if (enable)
     {
-      if (pool_elts (vrm->vrs) == 1)
+      /* If this is the first VR configured, add the local mcast routes */
+      if (n_vrs == 1)
 	mfib_table_entry_path_update (fib_index, vrrp_prefix, MFIB_SOURCE_API,
 				      &for_us);
 
@@ -396,7 +444,8 @@ vrrp_intf_enable_disable_mcast (u8 enable, u32 sw_if_index, u8 is_ipv6)
     }
   else
     {
-      if (pool_elts (vrm->vrs) == 0)
+      /* Remove mcast local routes if this is the last VR being deleted */
+      if (n_vrs == 0)
 	mfib_table_entry_path_remove (fib_index, vrrp_prefix, MFIB_SOURCE_API,
 				      &for_us);
 

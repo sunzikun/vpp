@@ -57,7 +57,7 @@ rdma_main_t rdma_main;
 static struct ibv_flow *
 rdma_rxq_init_flow (const rdma_device_t * rd, struct ibv_qp *qp,
 		    const mac_address_t * mac, const mac_address_t * mask,
-		    u32 flags)
+		    u16 ether_type, u32 flags)
 {
   struct ibv_flow *flow;
   struct raw_eth_flow_attr
@@ -75,6 +75,12 @@ rdma_rxq_init_flow (const rdma_device_t * rd, struct ibv_qp *qp,
 
   memcpy (fa.spec_eth.val.dst_mac, mac, sizeof (fa.spec_eth.val.dst_mac));
   memcpy (fa.spec_eth.mask.dst_mac, mask, sizeof (fa.spec_eth.mask.dst_mac));
+
+  if (ether_type)
+    {
+      fa.spec_eth.val.ether_type = ether_type;
+      fa.spec_eth.mask.ether_type = 0xffff;
+    }
 
   flow = ibv_create_flow (qp, &fa.attr);
   if (!flow)
@@ -104,16 +110,17 @@ rdma_dev_set_promisc (rdma_device_t * rd)
   const mac_address_t all = {.bytes = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0} };
   int err;
 
-  err = rdma_rxq_destroy_flow (rd, &rd->flow_mcast);
+  err = rdma_rxq_destroy_flow (rd, &rd->flow_mcast6);
+  err |= rdma_rxq_destroy_flow (rd, &rd->flow_ucast6);
+  err |= rdma_rxq_destroy_flow (rd, &rd->flow_mcast4);
+  err |= rdma_rxq_destroy_flow (rd, &rd->flow_ucast4);
   if (err)
     return ~0;
 
-  err = rdma_rxq_destroy_flow (rd, &rd->flow_ucast);
-  if (err)
-    return ~0;
-
-  rd->flow_ucast = rdma_rxq_init_flow (rd, rd->rx_qp, &all, &all, 0);
-  if (!rd->flow_ucast)
+  rd->flow_ucast6 =
+    rdma_rxq_init_flow (rd, rd->rx_qp6, &all, &all, ntohs (ETH_P_IPV6), 0);
+  rd->flow_ucast4 = rdma_rxq_init_flow (rd, rd->rx_qp4, &all, &all, 0, 0);
+  if (!rd->flow_ucast6 || !rd->flow_ucast4)
     return ~0;
 
   rd->flags |= RDMA_DEVICE_F_PROMISC;
@@ -128,25 +135,30 @@ rdma_dev_set_ucast (rdma_device_t * rd)
   const mac_address_t mcast = {.bytes = {0x1, 0x0, 0x0, 0x0, 0x0, 0x0} };
   int err;
 
-  err = rdma_rxq_destroy_flow (rd, &rd->flow_mcast);
+  err = rdma_rxq_destroy_flow (rd, &rd->flow_mcast6);
+  err |= rdma_rxq_destroy_flow (rd, &rd->flow_ucast6);
+  err |= rdma_rxq_destroy_flow (rd, &rd->flow_mcast4);
+  err |= rdma_rxq_destroy_flow (rd, &rd->flow_ucast4);
   if (err)
     return ~0;
 
-  err = rdma_rxq_destroy_flow (rd, &rd->flow_ucast);
-  if (err)
-    return ~0;
-
-  /* receive only packets with src = our MAC */
-  rd->flow_ucast = rdma_rxq_init_flow (rd, rd->rx_qp, &rd->hwaddr, &ucast, 0);
-  if (!rd->flow_ucast)
-    return ~0;
-
-  /* receive multicast packets */
-  rd->flow_mcast = rdma_rxq_init_flow (rd, rd->rx_qp, &mcast, &mcast,
-				       IBV_FLOW_ATTR_FLAGS_DONT_TRAP
-				       /* let others receive mcast packet too (eg. Linux) */
+  rd->flow_ucast6 =
+    rdma_rxq_init_flow (rd, rd->rx_qp6, &rd->hwaddr, &ucast,
+			ntohs (ETH_P_IPV6), 0);
+  rd->flow_mcast6 =
+    rdma_rxq_init_flow (rd, rd->rx_qp6, &mcast, &mcast, ntohs (ETH_P_IPV6),
+			IBV_FLOW_ATTR_FLAGS_DONT_TRAP
+			/* let others receive mcast packet too (eg. Linux) */
     );
-  if (!rd->flow_mcast)
+  rd->flow_ucast4 =
+    rdma_rxq_init_flow (rd, rd->rx_qp4, &rd->hwaddr, &ucast, 0, 0);
+  rd->flow_mcast4 =
+    rdma_rxq_init_flow (rd, rd->rx_qp4, &mcast, &mcast, 0,
+			IBV_FLOW_ATTR_FLAGS_DONT_TRAP
+			/* let others receive mcast packet too (eg. Linux) */
+    );
+  if (!rd->flow_ucast6 || !rd->flow_mcast6 || !rd->flow_ucast4
+      || !rd->flow_mcast4)
     return ~0;
 
   rd->flags &= ~RDMA_DEVICE_F_PROMISC;
@@ -182,7 +194,7 @@ rdma_flag_change (vnet_main_t * vnm, vnet_hw_interface_t * hw, u32 flags)
 
   switch (flags)
     {
-    case 0:
+    case ETHERNET_INTERFACE_FLAG_DEFAULT_L3:
       return rdma_dev_set_ucast (rd);
     case ETHERNET_INTERFACE_FLAG_ACCEPT_ALL:
       return rdma_dev_set_promisc (rd);
@@ -339,9 +351,18 @@ rdma_async_event_cleanup (rdma_device_t * rd)
 static clib_error_t *
 rdma_register_interface (vnet_main_t * vnm, rdma_device_t * rd)
 {
-  return ethernet_register_interface (vnm, rdma_device_class.index,
-				      rd->dev_instance, rd->hwaddr.bytes,
-				      &rd->hw_if_index, rdma_flag_change);
+  clib_error_t *err =
+    ethernet_register_interface (vnm, rdma_device_class.index,
+				 rd->dev_instance, rd->hwaddr.bytes,
+				 &rd->hw_if_index, rdma_flag_change);
+
+  /* Indicate ability to support L3 DMAC filtering and
+   * initialize interface to L3 non-promisc mode */
+  vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, rd->hw_if_index);
+  hi->flags |= VNET_HW_INTERFACE_FLAG_SUPPORTS_MAC_FILTER;
+  ethernet_set_flags (vnm, rd->hw_if_index,
+		      ETHERNET_INTERFACE_FLAG_DEFAULT_L3);
+  return err;
 }
 
 static void
@@ -366,8 +387,10 @@ rdma_dev_cleanup (rdma_device_t * rd)
        rdma_log (VLIB_LOG_LEVEL_DEBUG, rd, #fn "() failed (rv = %d)", rv); \
   }
 
-  _(ibv_destroy_flow, rd->flow_mcast);
-  _(ibv_destroy_flow, rd->flow_ucast);
+  _(ibv_destroy_flow, rd->flow_mcast6);
+  _(ibv_destroy_flow, rd->flow_ucast6);
+  _(ibv_destroy_flow, rd->flow_mcast4);
+  _(ibv_destroy_flow, rd->flow_ucast4);
   _(ibv_dereg_mr, rd->mr);
   vec_foreach (txq, rd->txqs)
   {
@@ -380,7 +403,8 @@ rdma_dev_cleanup (rdma_device_t * rd)
     _(ibv_destroy_cq, rxq->cq);
   }
   _(ibv_destroy_rwq_ind_table, rd->rx_rwq_ind_tbl);
-  _(ibv_destroy_qp, rd->rx_qp);
+  _(ibv_destroy_qp, rd->rx_qp6);
+  _(ibv_destroy_qp, rd->rx_qp4);
   _(ibv_dealloc_pd, rd->pd);
   _(ibv_close_device, rd->ctx);
 #undef _
@@ -402,10 +426,14 @@ rdma_rxq_init (vlib_main_t * vm, rdma_device_t * rd, u16 qid, u32 n_desc)
   struct ibv_cq_init_attr_ex cqa = { };
   struct ibv_wq_attr wqa;
   struct ibv_cq_ex *cqex;
+  struct mlx5dv_wq_init_attr dv_wqia = { };
 
   vec_validate_aligned (rd->rxqs, qid, CLIB_CACHE_LINE_BYTES);
   rxq = vec_elt_at_index (rd->rxqs, qid);
   rxq->size = n_desc;
+  rxq->log_wqe_sz = 0;
+  rxq->log_stride_per_wqe = 0;
+  rxq->buf_sz = vlib_buffer_get_default_data_size (vm);
   vec_validate_aligned (rxq->bufs, n_desc - 1, CLIB_CACHE_LINE_BYTES);
 
   cqa.cqe = n_desc;
@@ -432,7 +460,54 @@ rdma_rxq_init (vlib_main_t * vm, rdma_device_t * rd, u16 qid, u32 n_desc)
   wqia.max_sge = 1;
   wqia.pd = rd->pd;
   wqia.cq = rxq->cq;
-  if ((rxq->wq = ibv_create_wq (rd->ctx, &wqia)) == 0)
+  if (rd->flags & RDMA_DEVICE_F_MLX5DV)
+    {
+      if (rd->flags & RDMA_DEVICE_F_STRIDING_RQ)
+	{
+	  /* In STRIDING_RQ mode, map a descriptor to a stride, not a full WQE buffer */
+	  uword data_seg_log2_sz =
+	    min_log2 (vlib_buffer_get_default_data_size (vm));
+
+	  /* The trick is also to map a descriptor to a data segment in the WQE SG list
+	     The number of strides per WQE and the size of a WQE (in 16-bytes words) both
+	     must be powers of two.
+	     Moreover, in striding RQ mode, WQEs must include the SRQ header, which occupies
+	     one 16-bytes word. That is why WQEs have 2*RDMA_RXQ_MAX_CHAIN_SZ 16-bytes words:
+	     - One for the SRQ Header
+	     - RDMA_RXQ_MAX_CHAIN_SZ for the different data segments (each mapped to
+	     a stride, and a vlib_buffer)
+	     - RDMA_RXQ_MAX_CHAIN_SZ-1 null data segments
+	   */
+
+	  wqia.max_sge = RDMA_RXQ_MAX_CHAIN_SZ;
+	  dv_wqia.comp_mask = MLX5DV_WQ_INIT_ATTR_MASK_STRIDING_RQ;
+	  dv_wqia.striding_rq_attrs.two_byte_shift_en = 0;
+	  dv_wqia.striding_rq_attrs.single_wqe_log_num_of_strides =
+	    RDMA_RXQ_MAX_CHAIN_LOG_SZ;
+	  dv_wqia.striding_rq_attrs.single_stride_log_num_of_bytes =
+	    data_seg_log2_sz;
+	  wqia.max_wr >>= RDMA_RXQ_MAX_CHAIN_LOG_SZ;
+	  rxq->log_wqe_sz = RDMA_RXQ_MAX_CHAIN_LOG_SZ + 1;
+	  rxq->log_stride_per_wqe = RDMA_RXQ_MAX_CHAIN_LOG_SZ;
+	  rxq->buf_sz = 1 << data_seg_log2_sz;
+	}
+      else
+	{
+	  /* For now, in non STRIDING_RQ mode, SG operations/chained buffers
+	     are not supported */
+	  wqia.max_sge = 1;
+	}
+
+      if ((rxq->wq = mlx5dv_create_wq (rd->ctx, &wqia, &dv_wqia)))
+	{
+	  rxq->wq->events_completed = 0;
+	  pthread_mutex_init (&rxq->wq->mutex, NULL);
+	  pthread_cond_init (&rxq->wq->cond, NULL);
+	}
+      else
+	return clib_error_return_unix (0, "Create WQ Failed");
+    }
+  else if ((rxq->wq = ibv_create_wq (rd->ctx, &wqia)) == 0)
     return clib_error_return_unix (0, "Create WQ Failed");
 
   memset (&wqa, 0, sizeof (wqa));
@@ -447,6 +522,7 @@ rdma_rxq_init (vlib_main_t * vm, rdma_device_t * rd, u16 qid, u32 n_desc)
       struct mlx5dv_cq dv_cq;
       struct mlx5dv_rwq dv_rwq;
       u64 qw0;
+      u64 qw0_nullseg;
 
       obj.cq.in = rxq->cq;
       obj.cq.out = &dv_cq;
@@ -464,16 +540,26 @@ rdma_rxq_init (vlib_main_t * vm, rdma_device_t * rd, u16 qid, u32 n_desc)
       rxq->cq_db = (volatile u32 *) dv_cq.dbrec;
       rxq->cqn = dv_cq.cqn;
 
-      rxq->wqes = (mlx5dv_rwq_t *) dv_rwq.buf;
+      rxq->wqes = (mlx5dv_wqe_ds_t *) dv_rwq.buf;
       rxq->wq_db = (volatile u32 *) dv_rwq.dbrec;
       rxq->wq_stride = dv_rwq.stride;
       rxq->wqe_cnt = dv_rwq.wqe_cnt;
 
-      qw0 = clib_host_to_net_u32 (vlib_buffer_get_default_data_size (vm));
+      qw0 = clib_host_to_net_u32 (rxq->buf_sz);
+      qw0_nullseg = 0;
       qw0 |= (u64) clib_host_to_net_u32 (rd->lkey) << 32;
+      qw0_nullseg |= (u64) clib_host_to_net_u32 (rd->lkey) << 32;
 
-      for (int i = 0; i < rxq->size; i++)
-	rxq->wqes[i].dsz_and_lkey = qw0;
+/* Prefill the different 16 bytes words of the WQ. If not in striding RQ mode,
+   init with qw0 only with segments of rxq->buf_sz. Otherwise, for each WQE, the
+   RDMA_RXQ_MAX_CHAIN_SZ + 1 first 16-bytes words are initialised with qw0, the rest
+   are null segments */
+      for (int i = 0; i < rxq->wqe_cnt << rxq->log_wqe_sz; i++)
+	if (!(rd->flags & RDMA_DEVICE_F_STRIDING_RQ)
+	    || (i == 0) || !(((i - 1) >> rxq->log_stride_per_wqe) & 0x1))
+	  rxq->wqes[i].dsz_and_lkey = qw0;
+	else
+	  rxq->wqes[i].dsz_and_lkey = qw0_nullseg;
 
       for (int i = 0; i < (1 << rxq->log2_cq_size); i++)
 	rxq->cqes[i].opcode_cqefmt_se_owner = 0xff;
@@ -514,10 +600,18 @@ rdma_rxq_finalize (vlib_main_t * vm, rdma_device_t * rd)
   qpia.rx_hash_conf.rx_hash_key_len = sizeof (rdma_rss_hash_key);
   qpia.rx_hash_conf.rx_hash_key = rdma_rss_hash_key;
   qpia.rx_hash_conf.rx_hash_function = IBV_RX_HASH_FUNC_TOEPLITZ;
+
   qpia.rx_hash_conf.rx_hash_fields_mask =
-    IBV_RX_HASH_SRC_IPV4 | IBV_RX_HASH_DST_IPV4;
-  if ((rd->rx_qp = ibv_create_qp_ex (rd->ctx, &qpia)) == 0)
-    return clib_error_return_unix (0, "Queue Pair create failed");
+    IBV_RX_HASH_SRC_IPV4 | IBV_RX_HASH_DST_IPV4 | IBV_RX_HASH_SRC_PORT_TCP |
+    IBV_RX_HASH_DST_PORT_TCP;
+  if ((rd->rx_qp4 = ibv_create_qp_ex (rd->ctx, &qpia)) == 0)
+    return clib_error_return_unix (0, "IPv4 Queue Pair create failed");
+
+  qpia.rx_hash_conf.rx_hash_fields_mask =
+    IBV_RX_HASH_SRC_IPV6 | IBV_RX_HASH_DST_IPV6 | IBV_RX_HASH_SRC_PORT_TCP |
+    IBV_RX_HASH_DST_PORT_TCP;
+  if ((rd->rx_qp6 = ibv_create_qp_ex (rd->ctx, &qpia)) == 0)
+    return clib_error_return_unix (0, "IPv6 Queue Pair create failed");
 
   if (rdma_dev_set_ucast (rd))
     return clib_error_return_unix (0, "Set unicast mode failed");
@@ -792,11 +886,25 @@ rdma_create_if (vlib_main_t * vm, rdma_create_if_args_t * args)
   if (args->mode != RDMA_MODE_IBV)
     {
       struct mlx5dv_context mlx5dv_attrs = { };
+      mlx5dv_attrs.comp_mask |= MLX5DV_CONTEXT_MASK_STRIDING_RQ;
 
       if (mlx5dv_query_device (rd->ctx, &mlx5dv_attrs) == 0)
 	{
+	  uword data_seg_log2_sz =
+	    min_log2 (vlib_buffer_get_default_data_size (vm));
+
 	  if ((mlx5dv_attrs.flags & MLX5DV_CONTEXT_FLAGS_CQE_V1))
 	    rd->flags |= RDMA_DEVICE_F_MLX5DV;
+
+	  if (data_seg_log2_sz <=
+	      mlx5dv_attrs.striding_rq_caps.max_single_stride_log_num_of_bytes
+	      && data_seg_log2_sz >=
+	      mlx5dv_attrs.striding_rq_caps.min_single_stride_log_num_of_bytes
+	      && RDMA_RXQ_MAX_CHAIN_LOG_SZ >=
+	      mlx5dv_attrs.striding_rq_caps.min_single_wqe_log_num_of_strides
+	      && RDMA_RXQ_MAX_CHAIN_LOG_SZ <=
+	      mlx5dv_attrs.striding_rq_caps.max_single_wqe_log_num_of_strides)
+	    rd->flags |= RDMA_DEVICE_F_STRIDING_RQ;
 	}
       else
 	{

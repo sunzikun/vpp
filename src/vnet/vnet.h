@@ -40,6 +40,8 @@
 #ifndef included_vnet_vnet_h
 #define included_vnet_vnet_h
 
+#include <stddef.h>
+
 #include <vppinfra/types.h>
 
 #include <vppinfra/pcap.h>
@@ -47,6 +49,13 @@
 #include <vnet/config.h>
 #include <vnet/interface.h>
 #include <vnet/api_errno.h>
+
+/* ip table add delete callback */
+typedef struct _vnet_ip_table_function_list_elt
+{
+  struct _vnet_ip_table_function_list_elt *next_ip_table_function;
+  clib_error_t *(*fp) (struct vnet_main_t * vnm, u32 table_id, u32 flags);
+} _vnet_ip_table_function_list_elt_t;
 
 typedef struct vnet_main_t
 {
@@ -70,6 +79,9 @@ typedef struct vnet_main_t
     * sw_interface_mtu_change_functions[VNET_ITF_FUNC_N_PRIO];
 
   uword *interface_tag_by_sw_if_index;
+
+    _vnet_ip_table_function_list_elt_t
+    * ip_table_add_del_functions[VNET_ITF_FUNC_N_PRIO];
 
   /*
    * Last "api" error, preserved so we can issue reasonable diagnostics

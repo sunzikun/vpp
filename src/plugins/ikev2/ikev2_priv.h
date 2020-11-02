@@ -81,7 +81,7 @@ do {                                                                          \
     }                                                                         \
 } while (0)                                                                   \
 
-#define ikev2_elog_exchange(_format, _ispi, _rspi, _addr)                     \
+#define ikev2_elog_exchange_internal(_format, _ispi, _rspi, _addr)            \
 do {                                                                          \
   ikev2_main_t *km = &ikev2_main;                                             \
   if (PREDICT_FALSE (km->log_level >= IKEV2_LOG_DEBUG))                       \
@@ -109,6 +109,17 @@ do {                                                                          \
       ed->oct1 = (_addr);                                                     \
     }                                                                         \
 } while (0)                                                                   \
+
+#define IKE_ELOG_IP4_FMT "%d.%d.%d.%d"
+#define IKE_ELOG_IP6_FMT "[v6]:%x%x:%x%x"
+
+#define ikev2_elog_exchange(_fmt, _ispi, _rspi, _addr, _v4)                   \
+do {                                                                          \
+  if (_v4)                                                                    \
+    ikev2_elog_exchange_internal (_fmt IKE_ELOG_IP4_FMT, _ispi, _rspi, _addr);\
+  else                                                                        \
+    ikev2_elog_exchange_internal (_fmt IKE_ELOG_IP6_FMT, _ispi, _rspi, _addr);\
+} while (0)
 
 #define ikev2_elog_uint(_level, _format, _val)                                \
 do {                                                                          \
@@ -145,31 +156,6 @@ do {                                                                          \
         u8 i21; u8 i22; u8 i23; u8 i24; }) *ed;                               \
       ed = ELOG_DATA (&vlib_global_main.elog_main, e);                        \
       ed->val = _val;                                                         \
-      ed->i14 = (_ip1) >> 24;                                                 \
-      ed->i13 = (_ip1) >> 16;                                                 \
-      ed->i12 = (_ip1) >> 8;                                                  \
-      ed->i11 = (_ip1);                                                       \
-      ed->i24 = (_ip2) >> 24;                                                 \
-      ed->i23 = (_ip2) >> 16;                                                 \
-      ed->i22 = (_ip2) >> 8;                                                  \
-      ed->i21 = (_ip2);                                                       \
-    }                                                                         \
-} while (0)
-
-#define ikev2_elog_peers(_level, _format, _ip1, _ip2)                         \
-do {                                                                          \
-  ikev2_main_t *km = &ikev2_main;                                             \
-  if (PREDICT_FALSE (km->log_level >= _level))                                \
-    {                                                                         \
-      ELOG_TYPE_DECLARE (e) =                                                 \
-        {                                                                     \
-          .format = "ikev2: " _format,                                        \
-          .format_args = "i1i1i1i1i1i1i1i1",                                  \
-        };                                                                    \
-      CLIB_PACKED(struct {                                                    \
-        u8 i11; u8 i12; u8 i13; u8 i14;                                       \
-        u8 i21; u8 i22; u8 i23; u8 i24; }) *ed;                               \
-      ed = ELOG_DATA (&vlib_global_main.elog_main, e);                        \
       ed->i14 = (_ip1) >> 24;                                                 \
       ed->i13 = (_ip1) >> 16;                                                 \
       ed->i12 = (_ip1) >> 8;                                                  \
@@ -258,19 +244,19 @@ typedef struct
 
 typedef struct
 {
-  u8 ts_type;
+  ikev2_traffic_selector_type_t ts_type;
   u8 protocol_id;
   u16 selector_len;
   u16 start_port;
   u16 end_port;
-  ip4_address_t start_addr;
-  ip4_address_t end_addr;
+  ip_address_t start_addr;
+  ip_address_t end_addr;
 } ikev2_ts_t;
 
 typedef struct
 {
   u32 sw_if_index;
-  ip4_address_t ip4;
+  ip_address_t addr;
 } ikev2_responder_t;
 
 typedef struct
@@ -344,7 +330,6 @@ typedef struct
 typedef struct
 {
   u8 *name;
-  u8 is_enabled;
 
   ikev2_auth_t auth;
   ikev2_id_t loc_id;
@@ -369,8 +354,8 @@ typedef struct
   ikev2_state_t state;
   u8 unsupported_cp;
   u8 initial_contact;
-  ip4_address_t iaddr;
-  ip4_address_t raddr;
+  ip_address_t iaddr;
+  ip_address_t raddr;
   u64 ispi;
   u64 rspi;
   u8 *i_nonce;
@@ -415,12 +400,13 @@ typedef struct
   u8 *last_sa_init_res_packet_data;
 
   /* retransmit */
+  /* message id expected in the request from the other peer */
   u32 last_msg_id;
   u8 *last_res_packet_data;
 
   u8 is_initiator;
+  /* last message id that was used for an initiated request */
   u32 last_init_msg_id;
-  u8 is_profile_index_set;
   u32 profile_index;
   u8 is_tun_itf_set;
   u32 tun_itf;
@@ -443,6 +429,7 @@ typedef struct
 
   /* is NAT traversal mode */
   u8 natt;
+  u8 keys_generated;
 } ikev2_sa_t;
 
 
@@ -455,6 +442,13 @@ typedef struct
 
   /* hash */
   uword *sa_by_rspi;
+
+  EVP_CIPHER_CTX *evp_ctx;
+  HMAC_CTX *hmac_ctx;
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+  HMAC_CTX _hmac_ctx;
+  EVP_CIPHER_CTX _evp_ctx;
+#endif
 } ikev2_main_per_thread_data_t;
 
 typedef struct
@@ -516,8 +510,19 @@ u8 *ikev2_calc_prfplus (ikev2_sa_transform_t * tr, u8 * key, u8 * seed,
 			int len);
 v8 *ikev2_calc_integr (ikev2_sa_transform_t * tr, v8 * key, u8 * data,
 		       int len);
-v8 *ikev2_decrypt_data (ikev2_sa_t * sa, u8 * data, int len);
-int ikev2_encrypt_data (ikev2_sa_t * sa, v8 * src, u8 * dst);
+int ikev2_decrypt_data (ikev2_main_per_thread_data_t * ptd, ikev2_sa_t * sa,
+			ikev2_sa_transform_t * tr_encr, u8 * data, int len,
+			u32 * out_len);
+int ikev2_encrypt_data (ikev2_main_per_thread_data_t * ptd, ikev2_sa_t * sa,
+			ikev2_sa_transform_t * tr_encr, v8 * src, u8 * dst);
+int ikev2_encrypt_aead_data (ikev2_main_per_thread_data_t * ptd,
+			     ikev2_sa_t * sa, ikev2_sa_transform_t * tr_encr,
+			     v8 * src, u8 * dst, u8 * aad,
+			     u32 aad_len, u8 * tag);
+int ikev2_decrypt_aead_data (ikev2_main_per_thread_data_t * ptd,
+			     ikev2_sa_t * sa, ikev2_sa_transform_t * tr_encr,
+			     u8 * data, int data_len, u8 * aad, u32 aad_len,
+			     u8 * tag, u32 * out_len);
 void ikev2_generate_dh (ikev2_sa_t * sa, ikev2_sa_transform_t * t);
 void ikev2_complete_dh (ikev2_sa_t * sa, ikev2_sa_transform_t * t);
 int ikev2_verify_sign (EVP_PKEY * pkey, u8 * sigbuf, u8 * data);
@@ -557,11 +562,22 @@ void ikev2_payload_add_ts (ikev2_payload_chain_t * c, ikev2_ts_t * ts,
 void ikev2_payload_add_delete (ikev2_payload_chain_t * c, ikev2_delete_t * d);
 void ikev2_payload_chain_add_padding (ikev2_payload_chain_t * c, int bs);
 void ikev2_parse_vendor_payload (ike_payload_header_t * ikep);
-ikev2_sa_proposal_t *ikev2_parse_sa_payload (ike_payload_header_t * ikep);
-ikev2_ts_t *ikev2_parse_ts_payload (ike_payload_header_t * ikep);
-ikev2_delete_t *ikev2_parse_delete_payload (ike_payload_header_t * ikep);
-ikev2_notify_t *ikev2_parse_notify_payload (ike_payload_header_t * ikep);
+ikev2_sa_proposal_t *ikev2_parse_sa_payload (ike_payload_header_t * ikep,
+					     u32 rlen);
+ikev2_ts_t *ikev2_parse_ts_payload (ike_payload_header_t * ikep, u32 rlen);
+ikev2_delete_t *ikev2_parse_delete_payload (ike_payload_header_t * ikep,
+					    u32 rlen);
+ikev2_notify_t *ikev2_parse_notify_payload (ike_payload_header_t * ikep,
+					    u32 rlen);
 int ikev2_set_log_level (ikev2_log_level_t log_level);
+u8 *ikev2_find_ike_notify_payload (ike_header_t * ike, u32 msg_type);
+
+static_always_inline ikev2_main_per_thread_data_t *
+ikev2_get_per_thread_data ()
+{
+  u32 thread_index = vlib_get_thread_index ();
+  return vec_elt_at_index (ikev2_main.per_thread_data, thread_index);
+}
 #endif /* __included_ikev2_priv_h__ */
 
 

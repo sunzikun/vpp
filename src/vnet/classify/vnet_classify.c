@@ -147,9 +147,8 @@ vnet_classify_new_table (vnet_classify_main_t * cm,
   t->skip_n_vectors = skip_n_vectors;
   t->entries_per_page = 2;
 
-  t->mheap = create_mspace (memory_size, 1 /* locked */ );
-  /* classifier requires the memory to be contiguous, so can not expand. */
-  mspace_disable_expand (t->mheap);
+  t->mheap = clib_mem_create_heap (0, memory_size, 1 /* locked */ ,
+				   "classify");
 
   vec_validate_aligned (t->buckets, nbuckets - 1, CLIB_CACHE_LINE_BYTES);
   oldheap = clib_mem_set_heap (t->mheap);
@@ -176,7 +175,7 @@ vnet_classify_delete_table_index (vnet_classify_main_t * cm,
 
   vec_free (t->mask);
   vec_free (t->buckets);
-  destroy_mspace (t->mheap);
+  clib_mem_destroy_heap (t->mheap);
   pool_put (cm->tables, t);
 }
 
@@ -1028,7 +1027,7 @@ unformat_ip6_mask (unformat_input_t * input, va_list * args)
 {
   u8 **maskp = va_arg (*args, u8 **);
   u8 *mask = 0;
-  u8 found_something = 0;
+  u8 found_something;
   ip6_header_t *ip;
   u32 ip_version_traffic_class_and_flow_label;
 
@@ -1060,6 +1059,10 @@ unformat_ip6_mask (unformat_input_t * input, va_list * args)
 	else
 	break;
     }
+
+  /* Account for "special" field names */
+  found_something = version + traffic_class + flow_label
+    + src_address + dst_address + protocol;
 
 #define _(a) found_something += a;
   foreach_ip6_proto_field;
@@ -1808,9 +1811,11 @@ classify_filter_command_fn (vlib_main_t * vm,
       else
 	set = pool_elt_at_index (cm->filter_sets, set_index);
 
+      ASSERT (set);
+
       for (i = 0; i < vec_len (set->table_indices); i++)
 	{
-	  t = pool_elt_at_index (cm->tables, i);
+	  t = pool_elt_at_index (cm->tables, set->table_indices[i]);
 	  /* classifier geometry mismatch, can't use this table */
 	  if (t->match_n_vectors != match || t->skip_n_vectors != skip)
 	    continue;
@@ -1822,7 +1827,7 @@ classify_filter_command_fn (vlib_main_t * vm,
 	    continue;
 
 	  /* Winner... */
-	  table_index = i;
+	  table_index = set->table_indices[i];
 	  goto found_table;
 	}
     }
@@ -1859,18 +1864,8 @@ classify_filter_command_fn (vlib_main_t * vm,
       cm->filter_set_by_sw_if_index[sw_if_index] = set - cm->filter_sets;
     }
 
-  /* Put top table index where device drivers can find them */
-  if (sw_if_index > 0 && pkt_trace == 0)
-    {
-      vnet_hw_interface_t *hi = vnet_get_sup_hw_interface (vnm, sw_if_index);
-      ASSERT (vec_len (set->table_indices) > 0);
-      hi->trace_classify_table_index = set->table_indices[0];
-    }
-
   /* Sort filter tables from most-specific mask to least-specific mask */
   vec_sort_with_function (set->table_indices, filter_table_mask_compare);
-
-  ASSERT (set);
 
   /* Setup next_table_index fields */
   for (i = 0; i < vec_len (set->table_indices); i++)
@@ -1881,6 +1876,14 @@ classify_filter_command_fn (vlib_main_t * vm,
 	t->next_table_index = set->table_indices[i + 1];
       else
 	t->next_table_index = ~0;
+    }
+
+  /* Put top table index where device drivers can find them */
+  if (sw_if_index > 0 && pkt_trace == 0)
+    {
+      vnet_hw_interface_t *hi = vnet_get_sup_hw_interface (vnm, sw_if_index);
+      ASSERT (vec_len (set->table_indices) > 0);
+      hi->trace_classify_table_index = set->table_indices[0];
     }
 
 found_table:
@@ -2130,7 +2133,8 @@ format_vnet_classify_table (u8 * s, va_list * args)
   s = format (s, "%10u%10d%10d%10d", index, t->active_elements,
 	      t->next_table_index, t->miss_next_index);
 
-  s = format (s, "\n  Heap: %U", format_mheap, t->mheap, 0 /*verbose */ );
+  s = format (s, "\n  Heap: %U", format_clib_mem_heap, t->mheap,
+	      0 /*verbose */ );
 
   s = format (s, "\n  nbuckets %d, skip %d match %d flag %d offset %d",
 	      t->nbuckets, t->skip_n_vectors, t->match_n_vectors,

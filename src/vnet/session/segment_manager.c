@@ -138,13 +138,18 @@ segment_manager_add_segment (segment_manager_t * sm, uword segment_size)
 	}
     }
   else
-    seg_name = format (0, "%s%c", "process-private", 0);
+    {
+      app_worker_t *app_wrk = app_worker_get (sm->app_wrk_index);
+      application_t *app = application_get (app_wrk->app_index);
+      seg_name = format (0, "%v segment%c", app->name, 0);
+    }
 
   fs->ssvm.ssvm_size = segment_size;
   fs->ssvm.name = seg_name;
-  fs->ssvm.requested_va = baseva;
+  /* clib_mem_vm_map_shared consumes first page before requested_va */
+  fs->ssvm.requested_va = baseva + page_size;
 
-  if ((rv = ssvm_master_init (&fs->ssvm, props->segment_type)))
+  if ((rv = ssvm_server_init (&fs->ssvm, props->segment_type)))
     {
       clib_warning ("svm_master_init ('%v', %u) failed", seg_name,
 		    segment_size);
@@ -192,9 +197,11 @@ segment_manager_del_segment (segment_manager_t * sm, fifo_segment_t * fs)
 
   if (ssvm_type (&fs->ssvm) != SSVM_SEGMENT_PRIVATE)
     {
-      clib_valloc_free (&smm->va_allocator, fs->ssvm.requested_va);
+      /* clib_mem_vm_map_shared consumes first page before requested_va */
+      clib_valloc_free (&smm->va_allocator,
+			fs->ssvm.requested_va - clib_mem_get_page_size ());
 
-      if (sm->app_wrk_index != SEGMENT_MANAGER_INVALID_APP_INDEX)
+      if (!segment_manager_app_detached (sm))
 	{
 	  app_worker_t *app_wrk;
 	  u64 segment_handle;
@@ -224,7 +231,7 @@ segment_manager_get_segment_if_valid (segment_manager_t * sm,
  * Removes segment after acquiring writer lock
  */
 static inline void
-segment_manager_lock_and_del_segment (segment_manager_t * sm, u32 fs_index)
+sm_lock_and_del_segment_inline (segment_manager_t * sm, u32 fs_index)
 {
   fifo_segment_t *fs;
   u8 is_prealloc;
@@ -243,6 +250,12 @@ segment_manager_lock_and_del_segment (segment_manager_t * sm, u32 fs_index)
 
 done:
   clib_rwlock_writer_unlock (&sm->segments_rwlock);
+}
+
+void
+segment_manager_lock_and_del_segment (segment_manager_t * sm, u32 fs_index)
+{
+  sm_lock_and_del_segment_inline (sm, fs_index);
 }
 
 /**
@@ -326,21 +339,12 @@ segment_manager_alloc (void)
   return sm;
 }
 
-/**
- * Initializes segment manager based on options provided.
- * Returns error if ssvm segment(s) allocation fails.
- */
 int
 segment_manager_init (segment_manager_t * sm)
 {
   segment_manager_props_t *props;
-  uword first_seg_size;
-  fifo_segment_t *fs;
-  int fs_index, i;
 
   props = segment_manager_properties_get (sm);
-  first_seg_size = clib_max (props->segment_size,
-			     sm_main.default_segment_size);
 
   sm->max_fifo_size = props->max_fifo_size ?
     props->max_fifo_size : sm_main.default_max_fifo_size;
@@ -349,6 +353,25 @@ segment_manager_init (segment_manager_t * sm)
   segment_manager_set_watermarks (sm,
 				  props->high_watermark,
 				  props->low_watermark);
+  return 0;
+}
+
+/**
+ * Initializes segment manager based on options provided.
+ * Returns error if ssvm segment(s) allocation fails.
+ */
+int
+segment_manager_init_first (segment_manager_t * sm)
+{
+  segment_manager_props_t *props;
+  uword first_seg_size;
+  fifo_segment_t *fs;
+  int fs_index, i;
+
+  segment_manager_init (sm);
+  props = segment_manager_properties_get (sm);
+  first_seg_size = clib_max (props->segment_size,
+			     sm_main.default_segment_size);
 
   if (props->prealloc_fifos)
     {
@@ -720,7 +743,7 @@ alloc_check:
     }
   else
     {
-      clib_warning ("Can't add new seg and no space to allocate fifos!");
+      SESSION_DBG ("Can't add new seg and no space to allocate fifos!");
       return SESSION_E_SEG_NO_SPACE;
     }
 }
@@ -757,7 +780,7 @@ segment_manager_dealloc_fifos (svm_fifo_t * rx_fifo, svm_fifo_t * tx_fifo)
 
       /* Remove segment if it holds no fifos or first but not protected */
       if (segment_index != 0 || !sm->first_is_protected)
-	segment_manager_lock_and_del_segment (sm, segment_index);
+	sm_lock_and_del_segment_inline (sm, segment_index);
 
       /* Remove segment manager if no sessions and detached from app */
       if (segment_manager_app_detached (sm)
@@ -947,6 +970,7 @@ segment_manager_show_fn (vlib_main_t * vm, unformat_input_t * input,
       }));
       /* *INDENT-ON* */
 
+      vlib_cli_output (vm, "\n");
     }
   if (show_segments)
     {
@@ -1016,10 +1040,10 @@ segment_manager_format_sessions (segment_manager_t * sm, int verbose)
             str = format (0, "%U", format_session, session, verbose);
 
             if (verbose)
-              s = format (s, "%-40s%-20s%-15u%-10u", str, app_name,
+              s = format (s, "%-40v%-20v%-15u%-10u", str, app_name,
                           app_wrk->api_client_index, app_wrk->connects_seg_manager);
             else
-              s = format (s, "%-40s%-20s", str, app_name);
+              s = format (s, "%-40v%-20v", str, app_name);
 
             vlib_cli_output (vm, "%v", s);
             vec_reset_length (s);

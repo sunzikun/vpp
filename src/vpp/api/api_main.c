@@ -38,8 +38,29 @@ init_error_string_table (vat_main_t * vam)
   hash_set (vam->error_string_by_error_number, 99, "Misc");
 }
 
-static clib_error_t *
-api_main_init (vlib_main_t * vm)
+#if VPP_API_TEST_BUILTIN > 0
+static void
+load_features (void)
+{
+  vat_registered_features_t *f;
+  vat_main_t *vam = &vat_main;
+  clib_error_t *error;
+
+  f = vam->feature_function_registrations;
+
+  while (f)
+    {
+      error = f->function (vam);
+      if (error)
+	{
+	  clib_warning ("INIT FAILED");
+	}
+      f = f->next;
+    }
+}
+
+clib_error_t *
+vat_builtin_main_init (vlib_main_t * vm)
 {
   vat_main_t *vam = &vat_main;
   int rv;
@@ -56,10 +77,11 @@ api_main_init (vlib_main_t * vm)
   if (rv)
     clib_warning ("vat_plugin_init returned %d", rv);
 
+  load_features ();
+
   return 0;
 }
-
-VLIB_MAIN_LOOP_ENTER_FUNCTION (api_main_init);
+#endif
 
 void
 vat_plugin_hash_create (void)

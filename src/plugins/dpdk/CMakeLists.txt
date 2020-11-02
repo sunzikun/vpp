@@ -31,11 +31,11 @@ endif()
 ##############################################################################
 # Parse DPDK config and version header files
 ##############################################################################
-
 file(STRINGS ${DPDK_INCLUDE_DIR}/rte_config.h rte_config)
 file(STRINGS ${DPDK_INCLUDE_DIR}/rte_version.h rte_version)
+file(STRINGS ${DPDK_INCLUDE_DIR}/rte_build_config.h rte_build_config)
 
-foreach(l ${rte_config} ${rte_version})
+foreach(l ${rte_config} ${rte_build_config} ${rte_version}})
   if (l MATCHES "^#define[\t ]*RTE_")
     STRING(REGEX REPLACE "^#define[\t ]*([A-Z1-9_]+)[\t ]*(.+)" "\\1;\\2" v "${l}")
     list(GET v 0 name)
@@ -83,21 +83,6 @@ vpp_plugin_find_library(dpdk NUMA_LIB "numa")
 list(APPEND DPDK_LINK_LIBRARIES ${NUMA_LIB})
 
 ##############################################################################
-# AESNI libraries
-##############################################################################
-if(DPDK_RTE_LIBRTE_PMD_AESNI_MB OR DPDK_RTE_LIBRTE_PMD_AESNI_GCM)
-  if(DPDK_IS_SHARED_LIB)
-    vpp_plugin_find_library(dpdk IPSECMB_LIB "libIPSec_MB.so")
-    list(APPEND DPDK_LINK_LIBRARIES "${IPSECMB_LIB}")
-  else()
-    vpp_plugin_find_library(dpdk IPSECMB_LIB "libIPSec_MB.a")
-    get_filename_component(IPSECMB_LIB_DIR ${IPSECMB_LIB} DIRECTORY)
-    string_append(DPDK_LINK_FLAGS "-L${IPSECMB_LIB_DIR}")
-    string_append(DPDK_LINK_FLAGS "-Wl,--exclude-libs,libIPSec_MB.a,-l:libIPSec_MB.a")
-  endif()
-endif()
-
-##############################################################################
 # Mellanox libraries
 ##############################################################################
 if(DPDK_RTE_LIBRTE_MLX4_PMD OR DPDK_RTE_LIBRTE_MLX5_PMD)
@@ -113,6 +98,8 @@ endif()
 ##############################################################################
 # DPDK plugin
 ##############################################################################
+
+if (${DPDK_VERSION} VERSION_LESS "20.8.0")
 add_vpp_plugin(dpdk
   SOURCES
   buffer.c
@@ -154,3 +141,46 @@ add_vpp_plugin(dpdk
   vpp-plugin-dpdk
 )
 
+else ()
+add_vpp_plugin(dpdk
+  SOURCES
+  buffer.c
+  main.c
+  thread.c
+  device/cli.c
+  device/common.c
+  device/device.c
+  device/flow.c
+  device/format.c
+  device/init.c
+  device/node.c
+  ipsec/cli.c
+  ipsec/crypto_node.c
+  ipsec/esp_decrypt.c
+  ipsec/esp_encrypt.c
+  ipsec/ipsec.c
+  cryptodev/cryptodev_dp_api.c
+
+  MULTIARCH_SOURCES
+  buffer.c
+  device/device.c
+  device/node.c
+  ipsec/crypto_node.c
+  ipsec/esp_decrypt.c
+  ipsec/esp_encrypt.c
+
+  INSTALL_HEADERS
+  device/dpdk.h
+  ipsec/ipsec.h
+
+  LINK_FLAGS
+  "${DPDK_LINK_FLAGS}"
+
+  LINK_LIBRARIES
+  ${DPDK_LINK_LIBRARIES}
+
+  COMPONENT
+  vpp-plugin-dpdk
+)
+
+endif ()

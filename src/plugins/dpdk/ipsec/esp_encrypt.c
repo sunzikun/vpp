@@ -21,7 +21,7 @@
 
 #include <vnet/ipsec/ipsec.h>
 #include <vnet/ipsec/esp.h>
-#include <vnet/udp/udp.h>
+#include <vnet/udp/udp_local.h>
 #include <dpdk/buffer.h>
 #include <dpdk/ipsec/ipsec.h>
 #include <vnet/ipsec/ipsec_tun.h>
@@ -45,8 +45,8 @@ typedef enum
 #define foreach_esp_encrypt_error                   \
  _(RX_PKTS, "ESP pkts received")                    \
  _(SEQ_CYCLED, "Sequence number cycled")            \
- _(ENQ_FAIL, "Enqueue failed to crypto device")     \
- _(DISCARD, "Not enough crypto operations, discarding frame")  \
+ _(ENQ_FAIL, "Enqueue encrypt failed (queue full)")     \
+ _(DISCARD, "Not enough crypto operations")         \
  _(SESSION, "Failed to get crypto session")         \
  _(NOSUP, "Cipher/Auth not supported")
 
@@ -141,11 +141,12 @@ dpdk_esp_encrypt_inline (vlib_main_t * vm,
     {
       if (is_ip6)
 	vlib_node_increment_counter (vm, dpdk_esp6_encrypt_node.index,
-				     ESP_ENCRYPT_ERROR_DISCARD, 1);
+				     ESP_ENCRYPT_ERROR_DISCARD, n_left_from);
       else
 	vlib_node_increment_counter (vm, dpdk_esp4_encrypt_node.index,
-				     ESP_ENCRYPT_ERROR_DISCARD, 1);
+				     ESP_ENCRYPT_ERROR_DISCARD, n_left_from);
       /* Discard whole frame */
+      vlib_buffer_free (vm, from, n_left_from);
       return n_left_from;
     }
 
@@ -243,8 +244,6 @@ dpdk_esp_encrypt_inline (vlib_main_t * vm,
 
 	      if (PREDICT_FALSE (res_idx == (u16) ~ 0))
 		{
-		  clib_warning ("unsupported SA by thread index %u",
-				thread_idx);
 		  if (is_ip6)
 		    vlib_node_increment_counter (vm,
 						 dpdk_esp6_encrypt_node.index,
@@ -263,7 +262,6 @@ dpdk_esp_encrypt_inline (vlib_main_t * vm,
 	      error = crypto_get_session (&session, sa_index0, res, cwm, 1);
 	      if (PREDICT_FALSE (error || !session))
 		{
-		  clib_warning ("failed to get crypto session");
 		  if (is_ip6)
 		    vlib_node_increment_counter (vm,
 						 dpdk_esp6_encrypt_node.index,
@@ -285,9 +283,6 @@ dpdk_esp_encrypt_inline (vlib_main_t * vm,
 
 	  if (PREDICT_FALSE (esp_seq_advance (sa0)))
 	    {
-	      clib_warning
-		("sequence number counter has cycled SPI %u (0x%08x)",
-		 sa0->spi, sa0->spi);
 	      if (is_ip6)
 		vlib_node_increment_counter (vm,
 					     dpdk_esp6_encrypt_node.index,

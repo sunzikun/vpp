@@ -221,8 +221,8 @@ vlib_get_buffers_with_offset (vlib_main_t * vm, u32 * bi, void **b, int count,
      se we maintain two-in-parallel variant */
   while (count >= 8)
     {
-      u64x4 b0 = u32x4_extend_to_u64x4 (u32x4_load_unaligned (bi));
-      u64x4 b1 = u32x4_extend_to_u64x4 (u32x4_load_unaligned (bi + 4));
+      u64x4 b0 = u64x4_from_u32x4 (u32x4_load_unaligned (bi));
+      u64x4 b1 = u64x4_from_u32x4 (u32x4_load_unaligned (bi + 4));
       /* shift and add to get vlib_buffer_t pointer */
       u64x4_store_unaligned ((b0 << CLIB_LOG2_CACHE_LINE_BYTES) + off, b);
       u64x4_store_unaligned ((b1 << CLIB_LOG2_CACHE_LINE_BYTES) + off, b + 4);
@@ -234,18 +234,18 @@ vlib_get_buffers_with_offset (vlib_main_t * vm, u32 * bi, void **b, int count,
   while (count >= 4)
     {
 #ifdef CLIB_HAVE_VEC256
-      u64x4 b0 = u32x4_extend_to_u64x4 (u32x4_load_unaligned (bi));
+      u64x4 b0 = u64x4_from_u32x4 (u32x4_load_unaligned (bi));
       /* shift and add to get vlib_buffer_t pointer */
       u64x4_store_unaligned ((b0 << CLIB_LOG2_CACHE_LINE_BYTES) + off, b);
 #elif defined (CLIB_HAVE_VEC128)
       u64x2 off = u64x2_splat (buffer_mem_start + offset);
       u32x4 bi4 = u32x4_load_unaligned (bi);
-      u64x2 b0 = u32x4_extend_to_u64x2 ((u32x4) bi4);
+      u64x2 b0 = u64x2_from_u32x4 ((u32x4) bi4);
 #if defined (__aarch64__)
-      u64x2 b1 = u32x4_extend_to_u64x2_high ((u32x4) bi4);
+      u64x2 b1 = u64x2_from_u32x4_high ((u32x4) bi4);
 #else
       bi4 = u32x4_shuffle (bi4, 2, 3, 0, 1);
-      u64x2 b1 = u32x4_extend_to_u64x2 ((u32x4) bi4);
+      u64x2 b1 = u64x2_from_u32x4 ((u32x4) bi4);
 #endif
       u64x2_store_unaligned ((b0 << CLIB_LOG2_CACHE_LINE_BYTES) + off, b);
       u64x2_store_unaligned ((b1 << CLIB_LOG2_CACHE_LINE_BYTES) + off, b + 2);
@@ -524,7 +524,7 @@ vlib_get_buffer_pool (vlib_main_t * vm, u8 buffer_pool_index)
   return vec_elt_at_index (bm->buffer_pools, buffer_pool_index);
 }
 
-static_always_inline uword
+static_always_inline __clib_warn_unused_result uword
 vlib_buffer_pool_get (vlib_main_t * vm, u8 buffer_pool_index, u32 * buffers,
 		      u32 n_buffers)
 {
@@ -562,7 +562,7 @@ vlib_buffer_pool_get (vlib_main_t * vm, u8 buffer_pool_index, u32 * buffers,
     less than the number requested or zero
 */
 
-always_inline u32
+always_inline __clib_warn_unused_result u32
 vlib_buffer_alloc_from_pool (vlib_main_t * vm, u32 * buffers, u32 n_buffers,
 			     u8 buffer_pool_index)
 {
@@ -656,7 +656,7 @@ vlib_buffer_alloc_from_pool (vlib_main_t * vm, u32 * buffers, u32 n_buffers,
     @return - (u32) number of buffers actually allocated, may be
     less than the number requested or zero
 */
-always_inline u32
+always_inline __clib_warn_unused_result u32
 vlib_buffer_alloc_on_numa (vlib_main_t * vm, u32 * buffers, u32 n_buffers,
 			   u32 numa_node)
 {
@@ -673,7 +673,7 @@ vlib_buffer_alloc_on_numa (vlib_main_t * vm, u32 * buffers, u32 n_buffers,
     less than the number requested or zero
 */
 
-always_inline u32
+always_inline __clib_warn_unused_result u32
 vlib_buffer_alloc (vlib_main_t * vm, u32 * buffers, u32 n_buffers)
 {
   return vlib_buffer_alloc_on_numa (vm, buffers, n_buffers, vm->numa_node);
@@ -689,7 +689,7 @@ vlib_buffer_alloc (vlib_main_t * vm, u32 * buffers, u32 n_buffers)
     @return - (u32) number of buffers actually allocated, may be
     less than the number requested or zero
 */
-always_inline u32
+always_inline __clib_warn_unused_result u32
 vlib_buffer_alloc_to_ring (vlib_main_t * vm, u32 * ring, u32 start,
 			   u32 ring_size, u32 n_buffers)
 {
@@ -718,7 +718,7 @@ vlib_buffer_alloc_to_ring (vlib_main_t * vm, u32 * ring, u32 start,
     @return - (u32) number of buffers actually allocated, may be
     less than the number requested or zero
 */
-always_inline u32
+always_inline __clib_warn_unused_result u32
 vlib_buffer_alloc_to_ring_from_pool (vlib_main_t * vm, u32 * ring, u32 start,
 				     u32 ring_size, u32 n_buffers,
 				     u8 buffer_pool_index)

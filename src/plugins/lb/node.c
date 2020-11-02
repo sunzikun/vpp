@@ -185,7 +185,7 @@ lb_node_get_hash (lb_main_t *lbm, vlib_buffer_t *p, u8 is_input_v4,
 
   if (per_port_vip)
     {
-      /* For per-port-vip case, ip lookup stores dummy index */
+      /* For per-port-vip case, ip lookup stores placeholder index */
       key.vip_prefix_index = *vip_idx;
     }
 
@@ -435,7 +435,6 @@ lb_node_fn (vlib_main_t * vm,
           else if (encap_type == LB_ENCAP_TYPE_L3DSR) /* encap L3DSR*/
             {
               ip4_header_t *ip40;
-              tcp_header_t *th0;
               ip_csum_t csum;
               u32 old_dst, new_dst;
               u8 old_tos, new_tos;
@@ -459,9 +458,20 @@ lb_node_fn (vlib_main_t * vm,
               ip40->checksum = ip_csum_fold (csum);
 
               /* Recomputing L4 checksum after dst-IP modifying */
-              th0 = ip4_next_header (ip40);
-              th0->checksum = 0;
-              th0->checksum = ip4_tcp_udp_compute_checksum (vm, p0, ip40);
+              if (ip40->protocol == IP_PROTOCOL_TCP)
+                {
+                  tcp_header_t *th0;
+                  th0 = ip4_next_header (ip40);
+                  th0->checksum = 0;
+                  th0->checksum = ip4_tcp_udp_compute_checksum (vm, p0, ip40);
+                }
+              else if (ip40->protocol == IP_PROTOCOL_UDP)
+                {
+                  udp_header_t *uh0;
+                  uh0 = ip4_next_header (ip40);
+                  uh0->checksum = 0;
+                  uh0->checksum = ip4_tcp_udp_compute_checksum (vm, p0, ip40);
+                }
             }
           else if ((encap_type == LB_ENCAP_TYPE_NAT4)
               || (encap_type == LB_ENCAP_TYPE_NAT6))
@@ -1067,7 +1077,7 @@ VLIB_REGISTER_NODE (lb4_gre6_node) =
     .error_strings = lb_error_strings,
     .n_next_nodes = LB_N_NEXT,
     .next_nodes =
-        { [LB_NEXT_DROP] = "error-drop" }, 
+        { [LB_NEXT_DROP] = "error-drop" },
   };
 
 VLIB_REGISTER_NODE (lb4_gre4_node) =
@@ -1278,4 +1288,3 @@ VLIB_REGISTER_NODE (lb_nat6_in2out_node) =
           [LB_NAT6_IN2OUT_NEXT_LOOKUP] = "ip6-lookup",
       },
   };
-

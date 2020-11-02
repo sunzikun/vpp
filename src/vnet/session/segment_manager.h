@@ -88,6 +88,7 @@ typedef struct segment_manager_main_init_args_
 
 segment_manager_t *segment_manager_alloc (void);
 int segment_manager_init (segment_manager_t * sm);
+int segment_manager_init_first (segment_manager_t * sm);
 
 /**
  * Cleanup segment manager
@@ -109,6 +110,8 @@ u32 segment_manager_index (segment_manager_t * sm);
 int segment_manager_add_segment (segment_manager_t * sm, uword segment_size);
 void segment_manager_del_segment (segment_manager_t * sm,
 				  fifo_segment_t * fs);
+void segment_manager_lock_and_del_segment (segment_manager_t * sm,
+					   u32 fs_index);
 fifo_segment_t *segment_manager_get_segment (segment_manager_t * sm,
 					     u32 segment_index);
 fifo_segment_t *segment_manager_get_segment_w_handle (u64 sh);

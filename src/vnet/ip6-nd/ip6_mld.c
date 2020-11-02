@@ -20,9 +20,10 @@
 #include <vnet/ip/ip.h>
 #include <vnet/ip-neighbor/ip_neighbor_dp.h>
 
-#include <vnet/fib/ip6_fib.h>
 #include <vnet/ip/ip6_link.h>
 #include <vnet/ip/ip6_ll_table.h>
+
+#include <vnet/ethernet/ethernet.h>
 
 /**
  * @file
@@ -135,12 +136,12 @@ ip6_neighbor_del_mld_prefix (ip6_mld_t * imd, ip6_address_t * addr)
   ip6_mldp_group_t *mcast_group_info;
   uword *p;
 
-  p = mhash_get (&imd->address_to_mldp_index, &addr);
+  p = mhash_get (&imd->address_to_mldp_index, addr);
   mcast_group_info = p ? pool_elt_at_index (imd->mldp_group_pool, p[0]) : 0;
 
   if (mcast_group_info)
     {
-      mhash_unset (&imd->address_to_mldp_index, &addr,
+      mhash_unset (&imd->address_to_mldp_index, addr,
 		   /* old_value */ 0);
       pool_put (imd->mldp_group_pool, mcast_group_info);
     }

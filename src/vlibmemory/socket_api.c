@@ -170,12 +170,16 @@ vl_socket_free_registration_index (u32 pool_index)
 {
   int i;
   vl_api_registration_t *rp;
+  void vl_api_call_reaper_functions (u32 client_index);
+
   if (pool_is_free_index (socket_main.registration_pool, pool_index))
     {
       clib_warning ("main pool index %d already free", pool_index);
       return;
     }
   rp = pool_elt_at_index (socket_main.registration_pool, pool_index);
+
+  vl_api_call_reaper_functions (pool_index);
 
   ASSERT (rp->registration_type != REGISTRATION_TYPE_FREE);
   for (i = 0; i < vec_len (rp->additional_fds_to_close); i++)
@@ -537,7 +541,8 @@ vl_sock_api_send_fd_msg (int socket_fd, int fds[], int n_fds)
   cmsg->cmsg_type = SCM_RIGHTS;
   clib_memcpy_fast (CMSG_DATA (cmsg), fds, sizeof (int) * n_fds);
 
-  rv = sendmsg (socket_fd, &mh, 0);
+  while ((rv = sendmsg (socket_fd, &mh, 0)) < 0 && errno == EAGAIN)
+    ;
   if (rv < 0)
     return clib_error_return_unix (0, "sendmsg");
   return 0;
@@ -634,11 +639,16 @@ vl_api_sock_init_shm_t_handler (vl_api_sock_init_shm_t * mp)
   clib_memset (memfd, 0, sizeof (*memfd));
   memfd->ssvm_size = mp->requested_size;
   memfd->requested_va = 0ULL;
-  memfd->i_am_master = 1;
+  memfd->is_server = 1;
   memfd->name = format (0, "%s%c", regp->name, 0);
 
-  if ((rv = ssvm_master_init_memfd (memfd)))
+  if ((rv = ssvm_server_init_memfd (memfd)))
     goto reply;
+
+  /* delete the unused heap created in ssvm_server_init_memfd and mark it
+   * accessible again for ASAN */
+  clib_mem_destroy_heap (memfd->sh->heap);
+  CLIB_MEM_UNPOISON ((void *) memfd->sh->ssvm_va, memfd->ssvm_size);
 
   /* Remember to close this fd when the socket connection goes away */
   vec_add1 (regp->additional_fds_to_close, memfd->fd);

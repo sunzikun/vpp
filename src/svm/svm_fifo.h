@@ -295,7 +295,7 @@ void svm_fifo_enqueue_nocopy (svm_fifo_t * f, u32 len);
  * Overwrite fifo head with new data
  *
  * This should be typically used by dgram transport protocols that need
- * to update the dgram header after dequeueing a chunk of data. It assumes
+ * to update the dgram header after dequeuing a chunk of data. It assumes
  * that the dgram header is at most spread over two chunks.
  *
  * @param f		fifo
@@ -307,7 +307,9 @@ void svm_fifo_overwrite_head (svm_fifo_t * f, u8 * src, u32 len);
  * Dequeue data from fifo
  *
  * Data is dequeued to consumer provided buffer and head is atomically
- * updated.
+ * updated. This should not be used in combination with ooo lookups. If
+ * ooo peeking of data is needed in combination with dequeuing use @ref
+ * svm_fifo_dequeue_drop.
  *
  * @param f		fifo
  * @param len		length of data to dequeue
@@ -346,8 +348,23 @@ int svm_fifo_dequeue_drop (svm_fifo_t * f, u32 len);
  * @param f		fifo
  */
 void svm_fifo_dequeue_drop_all (svm_fifo_t * f);
-int svm_fifo_segments (svm_fifo_t * f, svm_fifo_seg_t * fs);
-void svm_fifo_segments_free (svm_fifo_t * f, svm_fifo_seg_t * fs);
+/**
+ * Get pointers to fifo chunks data in @ref svm_fifo_seg_t array
+ *
+ * Populates fifo segment array with pointers to fifo chunk data and lengths.
+ * Because this returns pointers to data, it must be paired with
+ * @ref svm_fifo_dequeue_drop to actually release the fifo chunks after the
+ * data is consumed.
+ *
+ * @param f		fifo
+ * @param offset	offset from where to retrieve segments
+ * @param fs		array of fifo segments allocated by caller
+ * @param n_segs	number of fifo segments in array
+ * @param max_bytes	max bytes to be mapped to fifo segments
+ * @return 		number of bytes in fifo segments or SVM_FIFO_EEMPTY
+ */
+int svm_fifo_segments (svm_fifo_t * f, u32 offset, svm_fifo_seg_t * fs,
+		       u32 n_segs, u32 max_bytes);
 /**
  * Add io events subscriber to list
  *

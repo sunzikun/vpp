@@ -116,6 +116,7 @@ typedef struct _vlib_node_registration
 
   /* Error strings indexed by error code for this node. */
   char **error_strings;
+  vl_counter_t *error_counters;
 
   /* Buffer format/unformat for this node. */
   format_function_t *format_buffer;
@@ -235,9 +236,6 @@ typedef struct
   u64 calls, vectors, clocks, suspends;
   u64 max_clock;
   u64 max_clock_n;
-  u64 perf_counter0_ticks;
-  u64 perf_counter1_ticks;
-  u64 perf_counter_vectors;
 } vlib_node_stats_t;
 
 #define foreach_vlib_node_state					\
@@ -326,8 +324,8 @@ typedef struct vlib_node_t
   u32 error_heap_handle;
   u32 error_heap_index;
 
-  /* Error strings indexed by error code for this node. */
-  char **error_strings;
+  /* Counter structures indexed by counter code for this node. */
+  vl_counter_t *error_counters;
 
   /* Vector of next node names.
      Only used before next_nodes array is initialized. */
@@ -471,10 +469,6 @@ typedef struct vlib_node_runtime_t
 
   vlib_error_t *errors;			/**< Vector of errors for this node. */
 
-#if __SIZEOF_POINTER__ == 4
-  u8 pad[8];
-#endif
-
   u32 clocks_since_last_overflow;	/**< Number of clock cycles. */
 
   u32 max_clock;			/**< Maximum clock cycle for an
@@ -487,10 +481,6 @@ typedef struct vlib_node_runtime_t
 
   u32 vectors_since_last_overflow;	/**< Number of vector elements
 					  processed by this node. */
-
-  u32 perf_counter0_ticks_since_last_overflow; /**< Perf counter 0 ticks */
-  u32 perf_counter1_ticks_since_last_overflow; /**< Perf counter 1 ticks */
-  u32 perf_counter_vectors_since_last_overflow;	/**< Perf counter vectors */
 
   u32 next_frame_index;			/**< Start of next frames for this
 					  node. */
@@ -511,6 +501,10 @@ typedef struct vlib_node_runtime_t
   u16 flags;				/**< Copy of main node flags. */
 
   u16 state;				/**< Input node state. */
+
+  u32 interrupt_data;			/**< Data passed together with interrupt.
+					  Valid only when state is
+					  VLIB_NODE_STATE_INTERRUPT */
 
   u16 n_next_nodes;
 
@@ -552,6 +546,7 @@ typedef struct
 
 typedef struct
 {
+  CLIB_CACHE_LINE_ALIGN_MARK (cacheline0);
   /* Node runtime for this process. */
   vlib_node_runtime_t node_runtime;
 
@@ -613,32 +608,10 @@ typedef struct
   vlib_cli_output_function_t *output_function;
   uword output_function_arg;
 
-#ifdef CLIB_UNIX
-  /* Pad to a multiple of the page size so we can mprotect process stacks */
-#define PAGE_SIZE_MULTIPLE 0x1000
-#define ALIGN_ON_MULTIPLE_PAGE_BOUNDARY_FOR_MPROTECT  __attribute__ ((aligned (PAGE_SIZE_MULTIPLE)))
-#else
-#define ALIGN_ON_MULTIPLE_PAGE_BOUNDARY_FOR_MPROTECT
-#endif
-
-  /* Process stack.  Starts here and extends 2^log2_n_stack_bytes
-     bytes. */
-
+  /* Process stack */
 #define VLIB_PROCESS_STACK_MAGIC (0xdead7ead)
-  u32 stack[0] ALIGN_ON_MULTIPLE_PAGE_BOUNDARY_FOR_MPROTECT;
-} vlib_process_t __attribute__ ((aligned (CLIB_CACHE_LINE_BYTES)));
-
-#ifdef CLIB_UNIX
-  /* Ensure that the stack is aligned on the multiple of the page size */
-typedef char
-  assert_process_stack_must_be_aligned_exactly_to_page_size_multiple[(sizeof
-								      (vlib_process_t)
-								      -
-								      PAGE_SIZE_MULTIPLE)
-								     ==
-								     0 ? 0 :
-								     -1];
-#endif
+  u32 *stack;
+} vlib_process_t;
 
 typedef struct
 {
@@ -697,6 +670,12 @@ vlib_timing_wheel_data_get_index (u32 d)
 
 typedef struct
 {
+  u32 node_runtime_index;
+  u32 data;
+} vlib_node_interrupt_t;
+
+typedef struct
+{
   /* Public nodes. */
   vlib_node_t **nodes;
 
@@ -711,7 +690,9 @@ typedef struct
   vlib_node_runtime_t *nodes_by_type[VLIB_N_NODE_TYPE];
 
   /* Node runtime indices for input nodes with pending interrupts. */
-  u32 *pending_interrupt_node_runtime_indices;
+  vlib_node_interrupt_t *pending_local_interrupts;
+  vlib_node_interrupt_t *pending_remote_interrupts;
+  volatile u32 *pending_remote_interrupts_notify;
   clib_spinlock_t pending_interrupt_lock;
 
   /* Input nodes are switched from/to interrupt to/from polling mode

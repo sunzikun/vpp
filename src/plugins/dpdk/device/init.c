@@ -113,44 +113,34 @@ dpdk_flag_change (vnet_main_t * vnm, vnet_hw_interface_t * hi, u32 flags)
 {
   dpdk_main_t *dm = &dpdk_main;
   dpdk_device_t *xd = vec_elt_at_index (dm->devices, hi->dev_instance);
-  u32 old = 0;
+  u32 old = (xd->flags & DPDK_DEVICE_FLAG_PROMISC) != 0;
 
-  if (ETHERNET_INTERFACE_FLAG_CONFIG_PROMISC (flags))
+  switch (flags)
     {
-      old = (xd->flags & DPDK_DEVICE_FLAG_PROMISC) != 0;
-
-      if (flags & ETHERNET_INTERFACE_FLAG_ACCEPT_ALL)
-	xd->flags |= DPDK_DEVICE_FLAG_PROMISC;
-      else
-	xd->flags &= ~DPDK_DEVICE_FLAG_PROMISC;
-
-      if (xd->flags & DPDK_DEVICE_FLAG_ADMIN_UP)
-	{
-	  if (xd->flags & DPDK_DEVICE_FLAG_PROMISC)
-	    rte_eth_promiscuous_enable (xd->port_id);
-	  else
-	    rte_eth_promiscuous_disable (xd->port_id);
-	}
-    }
-  else if (ETHERNET_INTERFACE_FLAG_CONFIG_MTU (flags))
-    {
+    case ETHERNET_INTERFACE_FLAG_DEFAULT_L3:
+      /* set to L3/non-promisc mode */
+      xd->flags &= ~DPDK_DEVICE_FLAG_PROMISC;
+      break;
+    case ETHERNET_INTERFACE_FLAG_ACCEPT_ALL:
+      xd->flags |= DPDK_DEVICE_FLAG_PROMISC;
+      break;
+    case ETHERNET_INTERFACE_FLAG_MTU:
       xd->port_conf.rxmode.max_rx_pkt_len = hi->max_packet_bytes;
       dpdk_device_setup (xd);
+      return 0;
+    default:
+      return ~0;
     }
-  return old;
-}
 
-static void
-dpdk_device_lock_init (dpdk_device_t * xd)
-{
-  int q;
-  vec_validate (xd->lockp, xd->tx_q_used - 1);
-  for (q = 0; q < xd->tx_q_used; q++)
+  if (xd->flags & DPDK_DEVICE_FLAG_ADMIN_UP)
     {
-      xd->lockp[q] = clib_mem_alloc_aligned (CLIB_CACHE_LINE_BYTES,
-					     CLIB_CACHE_LINE_BYTES);
-      clib_memset ((void *) xd->lockp[q], 0, CLIB_CACHE_LINE_BYTES);
+      if (xd->flags & DPDK_DEVICE_FLAG_PROMISC)
+	rte_eth_promiscuous_enable (xd->port_id);
+      else
+	rte_eth_promiscuous_disable (xd->port_id);
     }
+
+  return old;
 }
 
 static int
@@ -571,7 +561,7 @@ dpdk_lib_init (dpdk_main_t * dm)
                 {
                   struct rte_eth_link l;
                   rte_eth_link_get_nowait (i, &l);
-                  xd->port_type = port_type_from_link_speed (l.link_speed);
+		  xd->port_type = VNET_DPDK_PORT_TYPE_ETH_VF;
                 }
 	      break;
 
@@ -619,16 +609,12 @@ dpdk_lib_init (dpdk_main_t * dm)
       else
 	rte_eth_macaddr_get (i, (void *) addr);
 
-      if (xd->tx_q_used < tm->n_vlib_mains)
-	dpdk_device_lock_init (xd);
-
       xd->port_id = i;
       xd->device_index = xd - dm->devices;
       xd->per_interface_next_index = ~0;
 
       /* assign interface to input thread */
       int q;
-
 
       error = ethernet_register_interface
 	(dm->vnet_main, dpdk_device_class.index, xd->device_index,
@@ -743,6 +729,12 @@ dpdk_lib_init (dpdk_main_t * dm)
 	  hi->max_packet_bytes = mtu;
 	  hi->max_supported_packet_bytes = max_rx_frame;
 	  hi->numa_node = xd->cpu_socket;
+
+	  /* Indicate ability to support L3 DMAC filtering and
+	   * initialize interface to L3 non-promisc mode */
+	  hi->flags |= VNET_HW_INTERFACE_FLAG_SUPPORTS_MAC_FILTER;
+	  ethernet_set_flags (dm->vnet_main, xd->hw_if_index,
+			     ETHERNET_INTERFACE_FLAG_DEFAULT_L3);
 	}
 
       if (dm->conf->no_tx_checksum_offload == 0)
@@ -766,10 +758,20 @@ dpdk_lib_init (dpdk_main_t * dm)
 
       dpdk_device_setup (xd);
 
+      /* rss queues should be configured after dpdk_device_setup() */
+      if ((hi != NULL) && (devconf->rss_queues != NULL))
+        {
+          if (vnet_hw_interface_set_rss_queues
+              (vnet_get_main (), hi, devconf->rss_queues))
+          {
+            clib_warning ("%s: Failed to set rss queues", hi->name);
+          }
+        }
+
       if (vec_len (xd->errors))
-	dpdk_log_err ("setup failed for device %U. Errors:\n  %U",
-		      format_dpdk_device_name, i,
-		      format_dpdk_device_errors, xd);
+        dpdk_log_err ("setup failed for device %U. Errors:\n  %U",
+                      format_dpdk_device_name, i,
+                      format_dpdk_device_errors, xd);
 
       /*
        * A note on Cisco VIC (PMD_ENIC) and VLAN:
@@ -796,38 +798,39 @@ dpdk_lib_init (dpdk_main_t * dm)
        * otherwise in the startup config.
        */
 
-      vlan_off = rte_eth_dev_get_vlan_offload (xd->port_id);
-      if (devconf->vlan_strip_offload == DPDK_DEVICE_VLAN_STRIP_ON)
-	{
-	  vlan_off |= ETH_VLAN_STRIP_OFFLOAD;
-	  if (rte_eth_dev_set_vlan_offload (xd->port_id, vlan_off) >= 0)
-	    dpdk_log_info ("VLAN strip enabled for interface\n");
-	  else
-	    dpdk_log_warn ("VLAN strip cannot be supported by interface\n");
-	  xd->port_conf.rxmode.offloads |= DEV_RX_OFFLOAD_VLAN_STRIP;
-	}
-      else
-	{
-	  if (vlan_off & ETH_VLAN_STRIP_OFFLOAD)
-	    {
-	      vlan_off &= ~ETH_VLAN_STRIP_OFFLOAD;
-	      if (rte_eth_dev_set_vlan_offload (xd->port_id, vlan_off) >= 0)
-		dpdk_log_warn ("set VLAN offload failed\n");
-	    }
-	  xd->port_conf.rxmode.offloads &= ~DEV_RX_OFFLOAD_VLAN_STRIP;
-	}
+        vlan_off = rte_eth_dev_get_vlan_offload (xd->port_id);
+        if (devconf->vlan_strip_offload == DPDK_DEVICE_VLAN_STRIP_ON)
+          {
+            vlan_off |= ETH_VLAN_STRIP_OFFLOAD;
+            if (rte_eth_dev_set_vlan_offload (xd->port_id, vlan_off) >= 0)
+              dpdk_log_info ("VLAN strip enabled for interface\n");
+            else
+              dpdk_log_warn ("VLAN strip cannot be supported by interface\n");
+            xd->port_conf.rxmode.offloads |= DEV_RX_OFFLOAD_VLAN_STRIP;
+          }
+        else
+          {
+            if (vlan_off & ETH_VLAN_STRIP_OFFLOAD)
+              {
+        	vlan_off &= ~ETH_VLAN_STRIP_OFFLOAD;
+        	if (rte_eth_dev_set_vlan_offload (xd->port_id, vlan_off) >= 0)
+        	  dpdk_log_warn ("set VLAN offload failed\n");
+              }
+            xd->port_conf.rxmode.offloads &= ~DEV_RX_OFFLOAD_VLAN_STRIP;
+          }
 
-      if (hi)
-	hi->max_packet_bytes = xd->port_conf.rxmode.max_rx_pkt_len
-	  - sizeof (ethernet_header_t);
-      else
-	dpdk_log_warn ("hi NULL");
+        if (hi)
+          hi->max_packet_bytes = xd->port_conf.rxmode.max_rx_pkt_len
+            - sizeof (ethernet_header_t);
+        else
+          dpdk_log_warn ("hi NULL");
 
-      if (dm->conf->no_multi_seg)
-	mtu = mtu > ETHER_MAX_LEN ? ETHER_MAX_LEN : mtu;
+        if (dm->conf->no_multi_seg)
+          mtu = mtu > ETHER_MAX_LEN ? ETHER_MAX_LEN : mtu;
 
-      rte_eth_dev_set_mtu (xd->port_id, mtu);
-    }
+        rte_eth_dev_set_mtu (xd->port_id, mtu);
+}
+
   /* *INDENT-ON* */
 
   return 0;
@@ -859,7 +862,8 @@ dpdk_bind_devices_to_uio (dpdk_config_main_t * conf)
     d = vlib_pci_get_device_info (vm, addr, &error);
     if (error)
     {
-      clib_error_report (error);
+      vlib_log_warn (dpdk_main.log_default, "%U", format_clib_error, error);
+      clib_error_free (error);
       continue;
     }
 
@@ -1101,6 +1105,9 @@ dpdk_device_config (dpdk_config_main_t * conf, vlib_pci_addr_t pci_addr,
 	}
       else if (unformat (input, "devargs %s", &devconf->devargs))
 	;
+      else if (unformat (input, "rss-queues %U",
+			 unformat_bitmap_list, &devconf->rss_queues))
+	;
       else
 	{
 	  error = clib_error_return (0, "unknown input `%U'",
@@ -1175,7 +1182,7 @@ dpdk_config (vlib_main_t * vm, unformat_input_t * input)
   u8 file_prefix = 0;
   u8 *socket_mem = 0;
   u8 *huge_dir_path = 0;
-  u32 vendor, device;
+  u32 vendor, device, domain, bus, func;
 
   huge_dir_path =
     format (0, "%s/hugepages%c", vlib_unix_get_runtime_dir (), 0);
@@ -1246,6 +1253,16 @@ dpdk_config (vlib_main_t * vm, unformat_input_t * input)
 	{
 	  no_pci = 1;
 	  tmp = format (0, "--no-pci%c", 0);
+	  vec_add1 (conf->eal_init_args, tmp);
+	}
+      else
+	if (unformat
+	    (input, "blacklist %x:%x:%x.%x", &domain, &bus, &device, &func))
+	{
+	  tmp = format (0, "-b%c", 0);
+	  vec_add1 (conf->eal_init_args, tmp);
+	  tmp =
+	    format (0, "%04x:%02x:%02x.%x%c", domain, bus, device, func, 0);
 	  vec_add1 (conf->eal_init_args, tmp);
 	}
       else if (unformat (input, "blacklist %x:%x", &vendor, &device))
@@ -1414,6 +1431,9 @@ dpdk_config (vlib_main_t * vm, unformat_input_t * input)
 	/* copy tso config from default device */
 	_(devargs)
 
+	/* copy rss_queues config from default device */
+	_(rss_queues)
+
     /* add DPDK EAL whitelist/blacklist entry */
     if (num_whitelisted > 0 && devconf->is_blacklisted == 0)
     {
@@ -1488,7 +1508,7 @@ dpdk_config (vlib_main_t * vm, unformat_input_t * input)
 
   vec_terminate_c_string (conf->eal_init_args_str);
 
-  dpdk_log_warn ("EAL init args: %s", conf->eal_init_args_str);
+  dpdk_log_notice ("EAL init args: %s", conf->eal_init_args_str);
   ret = rte_eal_init (vec_len (conf->eal_init_args),
 		      (char **) conf->eal_init_args);
 
@@ -1617,7 +1637,10 @@ dpdk_process (vlib_main_t * vm, vlib_node_runtime_t * rt, vlib_frame_t * f)
 
   error = dpdk_cryptodev_init (vm);
   if (error)
-    clib_error_report (error);
+    {
+      vlib_log_warn (dpdk_main.log_cryptodev, "%U", format_clib_error, error);
+      clib_error_free (error);
+    }
 
   tm->worker_thread_release = 1;
 
@@ -1701,6 +1724,8 @@ dpdk_init (vlib_main_t * vm)
   dm->link_state_poll_interval = DPDK_LINK_POLL_INTERVAL;
 
   dm->log_default = vlib_log_register_class ("dpdk", 0);
+  dm->log_cryptodev = vlib_log_register_class ("dpdk", "cryptodev");
+  dm->log_ipsec = vlib_log_register_class ("dpdk", "ipsec");
 
   return error;
 }

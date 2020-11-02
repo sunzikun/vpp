@@ -188,9 +188,8 @@ format_tcp_vars (u8 * s, va_list * args)
   s = format (s, " index: %u cfg: %U flags: %U timers: %U\n", tc->c_c_index,
 	      format_tcp_cfg_flags, tc, format_tcp_connection_flags, tc,
 	      format_tcp_timers, tc);
-  s = format (s, " snd_una %u snd_nxt %u snd_una_max %u",
-	      tc->snd_una - tc->iss, tc->snd_nxt - tc->iss,
-	      tc->snd_una_max - tc->iss);
+  s = format (s, " snd_una %u snd_nxt %u", tc->snd_una - tc->iss,
+	      tc->snd_nxt - tc->iss);
   s = format (s, " rcv_nxt %u rcv_las %u\n",
 	      tc->rcv_nxt - tc->irs, tc->rcv_las - tc->irs);
   s = format (s, " snd_wnd %u rcv_wnd %u rcv_wscale %u ",
@@ -205,10 +204,11 @@ format_tcp_vars (u8 * s, va_list * args)
 	      tc->rcv_opts.tsecr, tc->tsecr_last_ack,
 	      tcp_time_now () - tc->tsval_recent_age);
   s = format (s, " snd_mss %u\n", tc->snd_mss);
-  s = format (s, " rto %u rto_boff %u srtt %u us %.3f rttvar %u rtt_ts %.4f",
-	      tc->rto, tc->rto_boff, tc->srtt, tc->mrtt_us * 1000, tc->rttvar,
-	      tc->rtt_ts);
-  s = format (s, " rtt_seq %u\n", tc->rtt_seq - tc->iss);
+  s = format (s, " rto %u rto_boff %u srtt %.1f us %.3f rttvar %.1f",
+	      tc->rto / 1000, tc->rto_boff, tc->srtt / 1000.0,
+	      tc->mrtt_us * 1e3, tc->rttvar / 1000.0);
+  s = format (s, " rtt_ts %.4f rtt_seq %u\n", tc->rtt_ts,
+	      tc->rtt_seq - tc->iss);
   s = format (s, " next_node %u opaque 0x%x fib_index %u\n",
 	      tc->next_node_index, tc->next_node_opaque, tc->c_fib_index);
   s = format (s, " cong:   %U", format_tcp_congestion, tc);
@@ -257,10 +257,11 @@ format_tcp_connection (u8 * s, va_list * args)
 
   if (!tc)
     return s;
-  s = format (s, "%-50U", format_tcp_connection_id, tc);
+  s = format (s, "%-" SESSION_CLI_ID_LEN "U", format_tcp_connection_id, tc);
   if (verbose)
     {
-      s = format (s, "%-15U", format_tcp_state, tc->state);
+      s = format (s, "%-" SESSION_CLI_STATE_LEN "U", format_tcp_state,
+		  tc->state);
       if (verbose > 1)
 	s = format (s, "\n%U", format_tcp_vars, tc);
     }
@@ -340,9 +341,10 @@ format_tcp_scoreboard (u8 * s, va_list * args)
 	      " rxt_sacked %u\n",
 	      sb->sacked_bytes, sb->last_sacked_bytes, sb->lost_bytes,
 	      sb->last_lost_bytes, sb->rxt_sacked);
-  s = format (s, "%Ulast_delivered %u high_sacked %u is_reneging %u\n",
+  s = format (s, "%Ulast_delivered %u high_sacked %u is_reneging %u",
 	      format_white_space, indent, sb->last_bytes_delivered,
 	      sb->high_sacked - tc->iss, sb->is_reneging);
+  s = format (s, " reorder %u\n", sb->reorder);
   s = format (s, "%Ucur_rxt_hole %u high_rxt %u rescue_rxt %u",
 	      format_white_space, indent, sb->cur_rxt_hole,
 	      sb->high_rxt - tc->iss, sb->rescue_rxt - tc->iss);
@@ -687,7 +689,7 @@ tcp_scoreboard_replay (u8 * s, tcp_connection_t * tc, u8 verbose)
   int i, trace_len;
   scoreboard_trace_elt_t *trace;
   u32 next_ack, left, group, has_new_ack = 0;
-  tcp_connection_t _dummy_tc, *dummy_tc = &_dummy_tc;
+  tcp_connection_t _placeholder_tc, *placeholder_tc = &_placeholder_tc;
   sack_block_t *block;
 
   if (!TCP_SCOREBOARD_TRACE)
@@ -699,10 +701,10 @@ tcp_scoreboard_replay (u8 * s, tcp_connection_t * tc, u8 verbose)
   if (!tc)
     return s;
 
-  clib_memset (dummy_tc, 0, sizeof (*dummy_tc));
-  tcp_connection_timers_init (dummy_tc);
-  scoreboard_init (&dummy_tc->sack_sb);
-  dummy_tc->rcv_opts.flags |= TCP_OPTS_FLAG_SACK;
+  clib_memset (placeholder_tc, 0, sizeof (*placeholder_tc));
+  tcp_connection_timers_init (placeholder_tc);
+  scoreboard_init (&placeholder_tc->sack_sb);
+  placeholder_tc->rcv_opts.flags |= TCP_OPTS_FLAG_SACK;
 
 #if TCP_SCOREBOARD_TRACE
   trace = tc->sack_sb.trace;
@@ -713,8 +715,8 @@ tcp_scoreboard_replay (u8 * s, tcp_connection_t * tc, u8 verbose)
     {
       if (trace[i].ack != 0)
 	{
-	  dummy_tc->snd_una = trace[i].ack - 1448;
-	  dummy_tc->snd_una_max = trace[i].ack;
+	  placeholder_tc->snd_una = trace[i].ack - 1448;
+	  placeholder_tc->snd_nxt = trace[i].ack;
 	}
     }
 
@@ -722,7 +724,7 @@ tcp_scoreboard_replay (u8 * s, tcp_connection_t * tc, u8 verbose)
   while (left < trace_len)
     {
       group = trace[left].group;
-      vec_reset_length (dummy_tc->rcv_opts.sacks);
+      vec_reset_length (placeholder_tc->rcv_opts.sacks);
       has_new_ack = 0;
       while (trace[left].group == group)
 	{
@@ -730,8 +732,8 @@ tcp_scoreboard_replay (u8 * s, tcp_connection_t * tc, u8 verbose)
 	    {
 	      if (verbose)
 		s = format (s, "Adding ack %u, snd_una_max %u, segs: ",
-			    trace[left].ack, trace[left].snd_una_max);
-	      dummy_tc->snd_una_max = trace[left].snd_una_max;
+			    trace[left].ack, trace[left].snd_nxt);
+	      placeholder_tc->snd_nxt = trace[left].snd_nxt;
 	      next_ack = trace[left].ack;
 	      has_new_ack = 1;
 	    }
@@ -740,7 +742,7 @@ tcp_scoreboard_replay (u8 * s, tcp_connection_t * tc, u8 verbose)
 	      if (verbose)
 		s = format (s, "[%u, %u], ", trace[left].start,
 			    trace[left].end);
-	      vec_add2 (dummy_tc->rcv_opts.sacks, block, 1);
+	      vec_add2 (placeholder_tc->rcv_opts.sacks, block, 1);
 	      block->start = trace[left].start;
 	      block->end = trace[left].end;
 	    }
@@ -748,16 +750,17 @@ tcp_scoreboard_replay (u8 * s, tcp_connection_t * tc, u8 verbose)
 	}
 
       /* Push segments */
-      tcp_rcv_sacks (dummy_tc, next_ack);
+      tcp_rcv_sacks (placeholder_tc, next_ack);
       if (has_new_ack)
-	dummy_tc->snd_una = next_ack;
+	placeholder_tc->snd_una = next_ack;
 
       if (verbose)
 	s = format (s, "result: %U", format_tcp_scoreboard,
-		    &dummy_tc->sack_sb);
+		    &placeholder_tc->sack_sb);
 
     }
-  s = format (s, "result: %U", format_tcp_scoreboard, &dummy_tc->sack_sb);
+  s =
+    format (s, "result: %U", format_tcp_scoreboard, &placeholder_tc->sack_sb);
 
   return s;
 }
@@ -897,6 +900,110 @@ VLIB_CLI_COMMAND (clear_tcp_stats_command, static) =
 };
 /* *INDENT-ON* */
 
+static void
+tcp_show_half_open (vlib_main_t * vm, u32 start, u32 end, u8 verbose)
+{
+  tcp_main_t *tm = &tcp_main;
+  u8 output_suppressed = 0;
+  u32 n_elts, count = 0;
+  tcp_connection_t *tc;
+  int max_index, i;
+
+  n_elts = pool_elts (tm->half_open_connections);
+  max_index = clib_max (pool_len (tm->half_open_connections), 1) - 1;
+  if (verbose && end == ~0 && n_elts > 50)
+    {
+      vlib_cli_output (vm, "Too many connections, use range <start> <end>");
+      return;
+    }
+
+  if (!verbose)
+    {
+      vlib_cli_output (vm, "%u tcp half-open connections", n_elts);
+      return;
+    }
+
+  for (i = start; i <= clib_min (end, max_index); i++)
+    {
+      if (pool_is_free_index (tm->half_open_connections, i))
+	continue;
+
+      tc = pool_elt_at_index (tm->half_open_connections, i);
+
+      count += 1;
+      if (verbose)
+	{
+	  if (count > 50 || (verbose > 1 && count > 10))
+	    {
+	      output_suppressed = 1;
+	      continue;
+	    }
+	}
+      vlib_cli_output (vm, "%U", format_tcp_connection, tc, verbose);
+    }
+  if (!output_suppressed)
+    vlib_cli_output (vm, "%u tcp half-open connections", n_elts);
+  else
+    vlib_cli_output (vm, "%u tcp half-open connections matched. Output "
+		     "suppressed. Use finer grained filter.", count);
+
+}
+
+static clib_error_t *
+show_tcp_half_open_fn (vlib_main_t * vm, unformat_input_t * input,
+		       vlib_cli_command_t * cmd)
+{
+  unformat_input_t _line_input, *line_input = &_line_input;
+  u32 start, end = ~0, verbose = 0;
+  clib_error_t *error = 0;
+
+  session_cli_return_if_not_enabled ();
+
+  if (!unformat_user (input, unformat_line_input, line_input))
+    {
+      tcp_show_half_open (vm, 0, ~0, 0);
+      return 0;
+    }
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (line_input, "range %u %u", &start, &end))
+	;
+      else if (unformat (line_input, "verbose %d", &verbose))
+	;
+      else if (unformat (line_input, "verbose"))
+	verbose = 1;
+      else
+	{
+	  error = clib_error_return (0, "unknown input `%U'",
+				     format_unformat_error, input);
+	  goto done;
+	}
+    }
+
+  if (start > end)
+    {
+      error = clib_error_return (0, "invalid range start: %u end: %u", start,
+				 end);
+      goto done;
+    }
+
+  tcp_show_half_open (vm, start, end, verbose);
+
+done:
+  unformat_free (line_input);
+  return error;
+}
+
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (show_tcp_half_open_command, static) =
+{
+  .path = "show tcp half-open",
+  .short_help = "show tcp half-open [verbose <n>] [range <start> <end>]",
+  .function = show_tcp_half_open_fn,
+};
+/* *INDENT-ON* */
+
 uword
 unformat_tcp_cc_algo (unformat_input_t * input, va_list * va)
 {
@@ -943,7 +1050,7 @@ unformat_tcp_cc_algo_cfg (unformat_input_t * input, va_list * va)
 static clib_error_t *
 tcp_config_fn (vlib_main_t * vm, unformat_input_t * input)
 {
-  u32 cwnd_multiplier, tmp_time, mtu;
+  u32 cwnd_multiplier, tmp_time, mtu, max_gso_size;
   uword memory_size;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
@@ -993,6 +1100,8 @@ tcp_config_fn (vlib_main_t * vm, unformat_input_t * input)
 	tcp_cfg.allow_tso = 1;
       else if (unformat (input, "no-csum-offload"))
 	tcp_cfg.csum_offload = 0;
+      else if (unformat (input, "max-gso-size %u", &max_gso_size))
+	tcp_cfg.max_gso_size = clib_min (max_gso_size, TCP_MAX_GSO_SZ);
       else if (unformat (input, "cc-algo %U", unformat_tcp_cc_algo,
 			 &tcp_cfg.cc_algo))
 	;

@@ -912,6 +912,17 @@ vlib_pci_enable_msix_irq (vlib_main_t * vm, vlib_pci_dev_handle_t h,
 			VFIO_IRQ_SET_ACTION_TRIGGER, fds);
 }
 
+uword
+vlib_pci_get_msix_file_index (vlib_main_t * vm, vlib_pci_dev_handle_t h,
+			      u16 index)
+{
+  linux_pci_device_t *p = linux_pci_get_device (h);
+  linux_pci_irq_t *irq = vec_elt_at_index (p->msix_irqs, index);
+  if (irq->fd == -1)
+    return ~0;
+  return irq->clib_file_index;
+}
+
 clib_error_t *
 vlib_pci_disable_msix_irq (vlib_main_t * vm, vlib_pci_dev_handle_t h,
 			   u16 start, u16 count)
@@ -966,13 +977,7 @@ add_device_vfio (vlib_main_t * vm, linux_pci_device_t * p,
       goto error;
     }
 
-  pci_log_debug (vm, p, "%s region_info index:%u size:0x%lx offset:0x%lx "
-		 "flags: %s%s%s(0x%x)", __func__,
-		 reg.index, reg.size, reg.offset,
-		 reg.flags & VFIO_REGION_INFO_FLAG_READ ? "rd " : "",
-		 reg.flags & VFIO_REGION_INFO_FLAG_WRITE ? "wr " : "",
-		 reg.flags & VFIO_REGION_INFO_FLAG_MMAP ? "mmap " : "",
-		 reg.flags);
+  pci_log_debug (vm, p, "%s %U", __func__, format_vfio_region_info, &reg);
 
   p->config_offset = reg.offset;
   p->config_fd = p->fd;
@@ -1087,23 +1092,28 @@ vlib_pci_region (vlib_main_t * vm, vlib_pci_dev_handle_t h, u32 bar, int *fd,
     }
   else if (p->type == LINUX_PCI_DEVICE_TYPE_VFIO)
     {
-      struct vfio_region_info reg = { 0 };
-      reg.argsz = sizeof (struct vfio_region_info);
-      reg.index = bar;
-      if (ioctl (p->fd, VFIO_DEVICE_GET_REGION_INFO, &reg) < 0)
+      struct vfio_region_info *r;
+      u32 sz = sizeof (struct vfio_region_info);
+    again:
+      r = clib_mem_alloc (sz);
+      clib_memset (r, 0, sz);
+      r->argsz = sz;
+      r->index = bar;
+      if (ioctl (p->fd, VFIO_DEVICE_GET_REGION_INFO, r) < 0)
 	return clib_error_return_unix (0, "ioctl(VFIO_DEVICE_GET_INFO) "
 				       "'%U'", format_vlib_pci_addr,
 				       &p->addr);
+      if (sz != r->argsz)
+	{
+	  sz = r->argsz;
+	  clib_mem_free (r);
+	  goto again;
+	}
       _fd = p->fd;
-      _size = reg.size;
-      _offset = reg.offset;
-      pci_log_debug (vm, p, "%s region_info index:%u size:0x%lx offset:0x%lx "
-		     "flags: %s%s%s(0x%x)", __func__,
-		     reg.index, reg.size, reg.offset,
-		     reg.flags & VFIO_REGION_INFO_FLAG_READ ? "rd " : "",
-		     reg.flags & VFIO_REGION_INFO_FLAG_WRITE ? "wr " : "",
-		     reg.flags & VFIO_REGION_INFO_FLAG_MMAP ? "mmap " : "",
-		     reg.flags);
+      _size = r->size;
+      _offset = r->offset;
+      pci_log_debug (vm, p, "%s %U", __func__, format_vfio_region_info, r);
+      clib_mem_free (r);
     }
   else
     ASSERT (0);
@@ -1124,8 +1134,20 @@ vlib_pci_map_region_int (vlib_main_t * vm, vlib_pci_dev_handle_t h,
   clib_error_t *error;
   int flags = MAP_SHARED;
   u64 size = 0, offset = 0;
+  u16 command;
 
   pci_log_debug (vm, p, "map region %u to va %p", bar, addr);
+
+  if ((error = vlib_pci_read_config_u16 (vm, h, 4, &command)))
+    return error;
+
+  if (!(command & PCI_COMMAND_MEMORY))
+    {
+      pci_log_debug (vm, p, "setting memory enable bit");
+      command |= PCI_COMMAND_MEMORY;
+      if ((error = vlib_pci_write_config_u16 (vm, h, 4, &command)))
+	return error;
+    }
 
   if ((error = vlib_pci_region (vm, h, bar, &fd, &size, &offset)))
     return error;
@@ -1133,8 +1155,10 @@ vlib_pci_map_region_int (vlib_main_t * vm, vlib_pci_dev_handle_t h,
   if (p->type == LINUX_PCI_DEVICE_TYPE_UIO && addr != 0)
     flags |= MAP_FIXED;
 
-  *result = mmap (addr, size, PROT_READ | PROT_WRITE, flags, fd, offset);
-  if (*result == (void *) -1)
+  *result = clib_mem_vm_map_shared (addr, size, fd, offset,
+				    "PCIe %U region %u", format_vlib_pci_addr,
+				    vlib_pci_get_addr (vm, h), bar);
+  if (*result == CLIB_MEM_VM_MAP_FAILED)
     {
       error = clib_error_return_unix (0, "mmap `BAR%u'", bar);
       if (p->type == LINUX_PCI_DEVICE_TYPE_UIO && (fd != -1))
@@ -1338,7 +1362,7 @@ vlib_pci_device_close (vlib_main_t * vm, vlib_pci_dev_handle_t h)
     {
       if (res->size == 0)
 	continue;
-      munmap (res->addr, res->size);
+      clib_mem_vm_unmap (res->addr);
       if (res->fd != -1)
         close (res->fd);
     }

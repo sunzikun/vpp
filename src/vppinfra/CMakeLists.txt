@@ -36,6 +36,8 @@ install(
   COMPONENT vpp-dev
 )
 
+add_definitions(-fvisibility=hidden)
+
 ##############################################################################
 # vppinfra sources
 ##############################################################################
@@ -55,6 +57,7 @@ set(VPPINFRA_SRCS
   longjmp.S
   macros.c
   maplog.c
+  mem.c
   mem_dlmalloc.c
   mhash.c
   mpcap.c
@@ -94,6 +97,8 @@ set(VPPINFRA_HEADERS
   bihash_40_8.h
   bihash_48_8.h
   bihash_8_8.h
+  bihash_8_16.h
+  bihash_24_16.h
   bihash_template.c
   bihash_template.h
   bihash_vec8_8.h
@@ -102,6 +107,7 @@ set(VPPINFRA_HEADERS
   byte_order.h
   cache.h
   callback.h
+  callback_data.h
   clib_error.h
   clib.h
   cpu.h
@@ -131,7 +137,6 @@ set(VPPINFRA_HEADERS
   memcpy_sse3.h
   mem.h
   mhash.h
-  mheap.h
   mpcap.h
   os.h
   pcap.h

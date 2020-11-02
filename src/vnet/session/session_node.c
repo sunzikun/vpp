@@ -49,9 +49,7 @@ session_mq_listen_handler (void *data)
 
   clib_memset (a, 0, sizeof (*a));
   a->sep.is_ip4 = mp->is_ip4;
-  clib_memcpy_fast (&a->sep.ip, &mp->ip, sizeof (mp->ip));
-  if (mp->is_ip4)
-    ip46_address_mask_ip4 (&a->sep.ip);
+  ip_copy (&a->sep.ip, &mp->ip, mp->is_ip4);
   a->sep.port = mp->port;
   a->sep.fib_index = mp->vrf;
   a->sep.sw_if_index = ENDPOINT_INVALID_INDEX;
@@ -60,9 +58,10 @@ session_mq_listen_handler (void *data)
   a->sep_ext.crypto_engine = mp->crypto_engine;
   a->app_index = app->app_index;
   a->wrk_map_index = mp->wrk_index;
+  a->sep_ext.transport_flags = mp->flags;
 
   if ((rv = vnet_listen (a)))
-    clib_warning ("listen returned: %d", rv);
+    clib_warning ("listen returned: %U", format_session_error, rv);
 
   app_wrk = application_get_worker (app, mp->wrk_index);
   mq_send_session_bound_cb (app_wrk->wrk_index, mp->context, a->handle, rv);
@@ -489,6 +488,33 @@ session_mq_worker_update_handler (void *data)
 
   if (s->session_state >= SESSION_STATE_TRANSPORT_CLOSING)
     app_worker_close_notify (app_wrk, s);
+}
+
+static void
+session_mq_app_wrk_rpc_handler (void *data)
+{
+  session_app_wrk_rpc_msg_t *mp = (session_app_wrk_rpc_msg_t *) data;
+  svm_msg_q_msg_t _msg, *msg = &_msg;
+  session_app_wrk_rpc_msg_t *rmp;
+  app_worker_t *app_wrk;
+  session_event_t *evt;
+  application_t *app;
+
+  app = application_lookup (mp->client_index);
+  if (!app)
+    return;
+
+  app_wrk = application_get_worker (app, mp->wrk_index);
+
+  svm_msg_q_lock_and_alloc_msg_w_ring (app_wrk->event_queue,
+				       SESSION_MQ_CTRL_EVT_RING, SVM_Q_WAIT,
+				       msg);
+  evt = svm_msg_q_msg_data (app_wrk->event_queue, msg);
+  clib_memset (evt, 0, sizeof (*evt));
+  evt->event_type = SESSION_CTRL_EVT_APP_WRK_RPC;
+  rmp = (session_app_wrk_rpc_msg_t *) evt->data;
+  clib_memcpy (rmp->data, mp->data, sizeof (mp->data));
+  svm_msg_q_add_and_unlock (app_wrk->event_queue, msg);
 }
 
 vlib_node_registration_t session_queue_node;
@@ -1156,9 +1182,13 @@ session_tx_fifo_dequeue_internal (session_worker_t * wrk,
 }
 
 always_inline session_t *
-session_event_get_session (session_event_t * e, u8 thread_index)
+session_event_get_session (session_worker_t * wrk, session_event_t * e)
 {
-  return session_get_if_valid (e->session_index, thread_index);
+  if (PREDICT_FALSE (pool_is_free_index (wrk->sessions, e->session_index)))
+    return 0;
+
+  ASSERT (session_is_valid (e->session_index, wrk->vm->thread_index));
+  return pool_elt_at_index (wrk->sessions, e->session_index);
 }
 
 always_inline void
@@ -1227,6 +1257,9 @@ session_event_dispatch_ctrl (session_worker_t * wrk, session_evt_elt_t * elt)
     case SESSION_CTRL_EVT_APP_DETACH:
       app_mq_detach_handler (session_evt_ctrl_data (wrk, elt));
       break;
+    case SESSION_CTRL_EVT_APP_WRK_RPC:
+      session_mq_app_wrk_rpc_handler (session_evt_ctrl_data (wrk, elt));
+      break;
     default:
       clib_warning ("unhandled event type %d", e->event_type);
     }
@@ -1245,8 +1278,7 @@ session_event_dispatch_ctrl (session_worker_t * wrk, session_evt_elt_t * elt)
 
 always_inline void
 session_event_dispatch_io (session_worker_t * wrk, vlib_node_runtime_t * node,
-			   session_evt_elt_t * elt, u32 thread_index,
-			   int *n_tx_packets)
+			   session_evt_elt_t * elt, int *n_tx_packets)
 {
   session_main_t *smm = &session_main;
   app_worker_t *app_wrk;
@@ -1261,7 +1293,7 @@ session_event_dispatch_io (session_worker_t * wrk, vlib_node_runtime_t * node,
     {
     case SESSION_IO_EVT_TX_FLUSH:
     case SESSION_IO_EVT_TX:
-      s = session_event_get_session (e, thread_index);
+      s = session_event_get_session (wrk, e);
       if (PREDICT_FALSE (!s))
 	break;
       CLIB_PREFETCH (s->tx_fifo, 2 * CLIB_CACHE_LINE_BYTES, LOAD);
@@ -1271,14 +1303,14 @@ session_event_dispatch_io (session_worker_t * wrk, vlib_node_runtime_t * node,
       (smm->session_tx_fns[s->session_type]) (wrk, node, elt, n_tx_packets);
       break;
     case SESSION_IO_EVT_RX:
-      s = session_event_get_session (e, thread_index);
+      s = session_event_get_session (wrk, e);
       if (!s)
 	break;
       transport_app_rx_evt (session_get_transport_proto (s),
 			    s->connection_index, s->thread_index);
       break;
     case SESSION_IO_EVT_BUILTIN_RX:
-      s = session_event_get_session (e, thread_index);
+      s = session_event_get_session (wrk, e);
       if (PREDICT_FALSE (!s || s->session_state >= SESSION_STATE_CLOSING))
 	break;
       svm_fifo_unset_event (s->rx_fifo);
@@ -1428,7 +1460,7 @@ session_queue_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node,
       elt = pool_elt_at_index (wrk->event_elts, ei);
       ei = clib_llist_next_index (elt, evt_list);
       clib_llist_remove (wrk->event_elts, evt_list, elt);
-      session_event_dispatch_io (wrk, node, elt, thread_index, &n_tx_packets);
+      session_event_dispatch_io (wrk, node, elt, &n_tx_packets);
     }
 
   SESSION_EVT (SESSION_EVT_DSP_CNTRS, NEW_IO_EVTS, wrk);
@@ -1448,8 +1480,7 @@ session_queue_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node,
 	  next_ei = clib_llist_next_index (elt, evt_list);
 	  clib_llist_remove (wrk->event_elts, evt_list, elt);
 
-	  session_event_dispatch_io (wrk, node, elt, thread_index,
-				     &n_tx_packets);
+	  session_event_dispatch_io (wrk, node, elt, &n_tx_packets);
 
 	  if (ei == old_ti)
 	    break;
@@ -1533,6 +1564,8 @@ session_queue_process (vlib_main_t * vm, vlib_node_runtime_t * rt,
 	  session_queue_run_on_main (vm);
 	  break;
 	case SESSION_Q_PROCESS_STOP:
+	  vlib_node_set_state (vm, session_queue_process_node.index,
+			       VLIB_NODE_STATE_DISABLED);
 	  timeout = 100000.0;
 	  break;
 	case ~0:

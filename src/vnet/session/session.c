@@ -812,8 +812,11 @@ session_stream_connect_notify (transport_connection_t * tc,
 
   if (app_worker_connect_notify (app_wrk, s, SESSION_E_NONE, opaque))
     {
+      session_lookup_del_connection (tc);
+      /* Avoid notifying app about rejected session cleanup */
       s = session_get (new_si, new_ti);
-      session_free_w_fifos (s);
+      segment_manager_dealloc_fifos (s->rx_fifo, s->tx_fifo);
+      session_free (s);
       return -1;
     }
 
@@ -1491,12 +1494,12 @@ session_vpp_event_queues_allocate (session_main_t * smm)
 	eqs_size = smm->evt_qs_segment_size;
 
       eqs->ssvm_size = eqs_size;
-      eqs->i_am_master = 1;
       eqs->my_pid = vpp_pid;
-      eqs->name = format (0, "%s%c", "evt-qs-segment", 0);
-      eqs->requested_va = smm->session_baseva;
+      eqs->name = format (0, "%s%c", "session: evt-qs-segment", 0);
+      /* clib_mem_vm_map_shared consumes first page before requested_va */
+      eqs->requested_va = smm->session_baseva + clib_mem_get_page_size ();
 
-      if (ssvm_master_init (eqs, SSVM_SEGMENT_MEMFD))
+      if (ssvm_server_init (eqs, SSVM_SEGMENT_MEMFD))
 	{
 	  clib_warning ("failed to initialize queue segment");
 	  return;
@@ -1658,8 +1661,13 @@ session_manager_main_enable (vlib_main_t * vm)
   session_main_t *smm = &session_main;
   vlib_thread_main_t *vtm = vlib_get_thread_main ();
   u32 num_threads, preallocated_sessions_per_worker;
+  uword margin = 8 << 12;
   session_worker_t *wrk;
   int i;
+
+  /* We only initialize once and do not de-initialized on disable */
+  if (smm->is_initialized)
+    goto done;
 
   num_threads = 1 /* main thread */  + vtm->n_threads;
 
@@ -1688,7 +1696,7 @@ session_manager_main_enable (vlib_main_t * vm)
   session_vpp_event_queues_allocate (smm);
 
   /* Initialize fifo segment main baseva and timeout */
-  sm_args->baseva = smm->session_baseva + smm->evt_qs_segment_size;
+  sm_args->baseva = smm->session_baseva + smm->evt_qs_segment_size + margin;
   sm_args->size = smm->session_va_space_size;
   segment_manager_main_init (sm_args);
 
@@ -1717,6 +1725,9 @@ session_manager_main_enable (vlib_main_t * vm)
   session_lookup_init ();
   app_namespaces_init ();
   transport_init ();
+  smm->is_initialized = 1;
+
+done:
 
   smm->is_enabled = 1;
 
@@ -1725,6 +1736,12 @@ session_manager_main_enable (vlib_main_t * vm)
   session_debug_init ();
 
   return 0;
+}
+
+static void
+session_manager_main_disable (vlib_main_t * vm)
+{
+  transport_enable_disable (vm, 0 /* is_en */ );
 }
 
 void
@@ -1738,10 +1755,10 @@ session_node_enable_disable (u8 is_en)
   foreach_vlib_main (({
     if (have_workers && ii == 0)
       {
-	vlib_node_set_state (this_vlib_main, session_queue_process_node.index,
-	                     state);
 	if (is_en)
 	  {
+	    vlib_node_set_state (this_vlib_main,
+	                         session_queue_process_node.index, state);
 	    vlib_node_t *n = vlib_get_node (this_vlib_main,
 	                                    session_queue_process_node.index);
 	    vlib_start_process (this_vlib_main, n->runtime_index);
@@ -1776,6 +1793,7 @@ vnet_session_enable_disable (vlib_main_t * vm, u8 is_en)
   else
     {
       session_main.is_enabled = 0;
+      session_manager_main_disable (vm);
       session_node_enable_disable (is_en);
     }
 
@@ -1901,6 +1919,10 @@ session_config_fn (vlib_main_t * vm, unformat_input_t * input)
 	;
       else if (unformat (input, "enable"))
 	smm->session_enable_asap = 1;
+      else if (unformat (input, "segment-baseva 0x%lx", &smm->session_baseva))
+	;
+      else if (unformat (input, "use-app-socket-api"))
+	appns_sapi_enable ();
       else
 	return clib_error_return (0, "unknown input `%U'",
 				  format_unformat_error, input);

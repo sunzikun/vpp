@@ -19,7 +19,7 @@
 #include <vnet/ethernet/ethernet.h>
 #include <vnet/ip/ip4_packet.h>
 #include <vnet/ip/ip6_packet.h>
-#include <vnet/udp/udp.h>
+#include <vnet/udp/udp_local.h>
 #include <vnet/udp/udp_packet.h>
 #include <vnet/vnet.h>
 #include <vnet/vxlan/vxlan_packet.h>
@@ -82,7 +82,6 @@ format_generic_header_offset (u8 * s, va_list * args)
 {
   generic_header_offset_t *gho = va_arg (*args, generic_header_offset_t *);
 
-  s = format (s, "\n\t");
   if (gho->gho_flags & GHO_F_TUNNEL)
     {
       if (gho->gho_flags & GHO_F_VXLAN_TUNNEL)
@@ -376,7 +375,7 @@ vnet_generic_outer_header_parser_inline (vlib_buffer_t * b0,
   u16 ethertype = 0;
   u16 l2hdr_sz = 0;
 
-  ASSERT (is_ip4 ^ is_ip6);
+  ASSERT (!(is_ip4 && is_ip6));
 
   if (is_l2)
     {

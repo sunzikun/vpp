@@ -358,6 +358,7 @@ typedef enum
   SESSION_CTRL_EVT_APP_DEL_SEGMENT,
   SESSION_CTRL_EVT_MIGRATED,
   SESSION_CTRL_EVT_CLEANUP,
+  SESSION_CTRL_EVT_APP_WRK_RPC,
 } session_evt_type_t;
 
 #define foreach_session_ctrl_evt				\
@@ -383,6 +384,7 @@ typedef enum
   _(APP_DEL_SEGMENT, app_del_segment)				\
   _(MIGRATED, migrated)						\
   _(CLEANUP, cleanup)						\
+  _(APP_WRK_RPC, app_wrk_rpc)					\
 
 /* Deprecated and will be removed. Use types above */
 #define FIFO_EVENT_APP_RX SESSION_IO_EVT_RX
@@ -492,6 +494,9 @@ typedef enum session_error_
   foreach_session_error
 #undef _
 } session_error_t;
+
+#define SESSION_CLI_ID_LEN "60"
+#define SESSION_CLI_STATE_LEN "15"
 
 /* Maintained for compatibility. Will be deprecated */
 #define SESSION_ERROR_SEG_CREATE SESSION_E_SEG_CREATE

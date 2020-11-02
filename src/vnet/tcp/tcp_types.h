@@ -20,16 +20,18 @@
 #include <vppinfra/rbtree.h>
 #include <vnet/tcp/tcp_packet.h>
 #include <vnet/session/transport.h>
-#include <vppinfra/tw_timer_16t_2w_512sl.h>
 
-#define TCP_TICK 0.001			/**< TCP tick period (s) */
-#define THZ (u32) (1/TCP_TICK)		/**< TCP tick frequency */
-#define TCP_TSTAMP_RESOLUTION TCP_TICK	/**< Time stamp resolution */
-#define TCP_PAWS_IDLE 24 * 24 * 60 * 60 * THZ /**< 24 days */
+#define TCP_TICK 0.000001			/**< TCP tick period (s) */
+#define THZ (u32) (1/TCP_TICK)			/**< TCP tick frequency */
+
+#define TCP_TSTP_TICK 0.001			/**< Timestamp tick (s) */
+#define TCP_TSTP_HZ (u32) (1/TCP_TSTP_TICK)	/**< Timestamp freq */
+#define TCP_PAWS_IDLE (24 * 86400 * TCP_TSTP_HZ)/**< 24 days */
+#define TCP_TSTP_TO_HZ (u32) (TCP_TSTP_TICK * THZ)
+
 #define TCP_FIB_RECHECK_PERIOD	1 * THZ	/**< Recheck every 1s */
 #define TCP_MAX_OPTION_SPACE 40
 #define TCP_CC_DATA_SZ 24
-#define TCP_MAX_GSO_SZ 65536
 #define TCP_RXT_MAX_BURST 10
 
 #define TCP_DUPACK_THRESHOLD 	3
@@ -62,7 +64,6 @@ typedef enum _tcp_state
 /** TCP timers */
 #define foreach_tcp_timer               \
   _(RETRANSMIT, "RETRANSMIT")           \
-  _(DELACK, "DELAYED ACK")              \
   _(PERSIST, "PERSIST")                 \
   _(WAITCLOSE, "WAIT CLOSE")            \
   _(RETRANSMIT_SYN, "RETRANSMIT SYN")   \
@@ -73,12 +74,12 @@ typedef enum _tcp_timers
   foreach_tcp_timer
 #undef _
   TCP_N_TIMERS
-} tcp_timers_e;
+} __clib_packed tcp_timers_e;
 
 #define TCP_TIMER_HANDLE_INVALID ((u32) ~0)
 
-#define TCP_TIMER_TICK		0.1		/**< Timer tick in seconds */
-#define TCP_TO_TIMER_TICK       TCP_TICK*10	/**< Factor for converting
+#define TCP_TIMER_TICK		0.0001		/**< Timer tick in seconds */
+#define TCP_TO_TIMER_TICK       TCP_TICK*10000	/**< Factor for converting
 						     ticks to timer ticks */
 
 #define TCP_RTO_MAX 60 * THZ	/* Min max RTO (60s) as per RFC6298 */
@@ -148,13 +149,14 @@ typedef enum tcp_connection_flag_
 #define TCP_SCOREBOARD_TRACE (0)
 #define TCP_MAX_SACK_BLOCKS 255	/**< Max number of SACK blocks stored */
 #define TCP_INVALID_SACK_HOLE_INDEX ((u32)~0)
+#define TCP_MAX_SACK_REORDER 300
 
 typedef struct _scoreboard_trace_elt
 {
   u32 start;
   u32 end;
   u32 ack;
-  u32 snd_una_max;
+  u32 snd_nxt;
   u32 group;
 } scoreboard_trace_elt_t;
 
@@ -182,7 +184,8 @@ typedef struct _sack_scoreboard
   u32 lost_bytes;			/**< Bytes lost as per RFC6675 */
   u32 last_lost_bytes;			/**< Number of bytes last lost */
   u32 cur_rxt_hole;			/**< Retransmitting from this hole */
-  u8 is_reneging;
+  u32 reorder;				/**< Estimate of segment reordering */
+  u8 is_reneging;			/**< Flag set if peer is reneging*/
 
 #if TCP_SCOREBOARD_TRACE
   scoreboard_trace_elt_t *trace;
@@ -281,6 +284,7 @@ typedef struct _tcp_connection
   u8 cfg_flags;			/**< Connection configuration flags */
   u16 flags;			/**< Connection flags (see tcp_conn_flags_e) */
   u32 timers[TCP_N_TIMERS];	/**< Timer handles into timer wheel */
+  u32 pending_timers;		/**< Expired timers not yet handled */
 
   u64 segs_in;		/** RFC4022/4898 tcpHCInSegs/tcpEStatsPerfSegsIn */
   u64 bytes_in;		/** RFC4898 tcpEStatsPerfHCDataOctetsIn */
@@ -289,7 +293,6 @@ typedef struct _tcp_connection
 
   /** Send sequence variables RFC793 */
   u32 snd_una;		/**< oldest unacknowledged sequence number */
-  u32 snd_una_max;	/**< newest unacknowledged sequence number + 1*/
   u32 snd_wnd;		/**< send window */
   u32 snd_wl1;		/**< seq number used for last snd.wnd update */
   u32 snd_wl2;		/**< ack number used for last snd.wnd update */
@@ -341,7 +344,7 @@ typedef struct _tcp_connection
   u32 rxt_delivered;	/**< Rxt bytes delivered during current cc event */
   u32 rxt_head;		/**< snd_una last time we re rxted the head */
   u32 tsecr_last_ack;	/**< Timestamp echoed to us in last healthy ACK */
-  u32 snd_congestion;	/**< snd_una_max when congestion is detected */
+  u32 snd_congestion;	/**< snd_nxt when congestion is detected */
   u32 tx_fifo_size;	/**< Tx fifo size. Used to constrain cwnd */
   tcp_cc_algorithm_t *cc_algo;	/**< Congestion control algorithm */
   u8 cc_data[TCP_CC_DATA_SZ];	/**< Congestion control algo private data */
@@ -355,7 +358,7 @@ typedef struct _tcp_connection
   /* RTT and RTO */
   u32 rto;		/**< Retransmission timeout */
   u32 rto_boff;		/**< Index for RTO backoff */
-  u32 srtt;		/**< Smoothed RTT */
+  u32 srtt;		/**< Smoothed RTT measured in @ref TCP_TICK */
   u32 rttvar;		/**< Smoothed mean RTT difference. Approximates variance */
   u32 rtt_seq;		/**< Sequence number for tracked ACK */
   f64 rtt_ts;		/**< Timestamp for tracked ACK */
@@ -441,7 +444,35 @@ tcp_get_connection_from_transport (transport_connection_t * tconn)
   return (tcp_connection_t *) tconn;
 }
 
-typedef tw_timer_wheel_16t_2w_512sl_t tcp_timer_wheel_t;
+/*
+ * Define custom timer wheel geometry
+ */
+
+#undef TW_TIMER_WHEELS
+#undef TW_SLOTS_PER_RING
+#undef TW_RING_SHIFT
+#undef TW_RING_MASK
+#undef TW_TIMERS_PER_OBJECT
+#undef LOG2_TW_TIMERS_PER_OBJECT
+#undef TW_SUFFIX
+#undef TW_OVERFLOW_VECTOR
+#undef TW_FAST_WHEEL_BITMAP
+#undef TW_TIMER_ALLOW_DUPLICATE_STOP
+#undef TW_START_STOP_TRACE_SIZE
+
+#define TW_TIMER_WHEELS 2
+#define TW_SLOTS_PER_RING 1024
+#define TW_RING_SHIFT 10
+#define TW_RING_MASK (TW_SLOTS_PER_RING -1)
+#define TW_TIMERS_PER_OBJECT 16
+#define LOG2_TW_TIMERS_PER_OBJECT 4
+#define TW_SUFFIX _tcp_twsl
+#define TW_FAST_WHEEL_BITMAP 0
+#define TW_TIMER_ALLOW_DUPLICATE_STOP 1
+
+#include <vppinfra/tw_timer_template.h>
+
+typedef tw_timer_wheel_tcp_twsl_t tcp_timer_wheel_t;
 
 #endif /* SRC_VNET_TCP_TCP_TYPES_H_ */
 

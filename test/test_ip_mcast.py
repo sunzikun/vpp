@@ -5,8 +5,9 @@ import unittest
 from framework import VppTestCase, VppTestRunner
 from vpp_ip import DpoProto
 from vpp_ip_route import VppIpMRoute, VppMRoutePath, VppMFibSignal, \
-    MRouteItfFlags, MRouteEntryFlags, VppIpTable, FibPathProto
+    VppIpTable, FibPathProto
 from vpp_gre_interface import VppGreInterface
+from vpp_papi import VppEnum
 
 from scapy.packet import Raw
 from scapy.layers.l2 import Ether, GRE
@@ -95,7 +96,7 @@ class TestIPMcast(VppTestCase):
     def create_stream_ip4(self, src_if, src_ip, dst_ip, payload_size=0):
         pkts = []
         # default to small packet sizes
-        p = (Ether(dst=src_if.local_mac, src=src_if.remote_mac) /
+        p = (Ether(dst=getmacbyip(dst_ip), src=src_if.remote_mac) /
              IP(src=src_ip, dst=dst_ip) /
              UDP(sport=1234, dport=1234))
         if not payload_size:
@@ -111,7 +112,7 @@ class TestIPMcast(VppTestCase):
         for i in range(0, N_PKTS_IN_STREAM):
             info = self.create_packet_info(src_if, src_if)
             payload = self.info_to_payload(info)
-            p = (Ether(dst=src_if.local_mac, src=src_if.remote_mac) /
+            p = (Ether(dst=getmacbyip6(dst_ip), src=src_if.remote_mac) /
                  IPv6(src=src_ip, dst=dst_ip) /
                  UDP(sport=1234, dport=1234) /
                  Raw(payload))
@@ -185,10 +186,21 @@ class TestIPMcast(VppTestCase):
     def test_ip_mcast(self):
         """ IP Multicast Replication """
 
+        MRouteItfFlags = VppEnum.vl_api_mfib_itf_flags_t
+        MRouteEntryFlags = VppEnum.vl_api_mfib_entry_flags_t
+
         #
         # a stream that matches the default route. gets dropped.
         #
         self.vapi.cli("clear trace")
+        self.vapi.cli("packet mac-filter pg0 on")
+        self.vapi.cli("packet mac-filter pg1 on")
+        self.vapi.cli("packet mac-filter pg2 on")
+        self.vapi.cli("packet mac-filter pg4 on")
+        self.vapi.cli("packet mac-filter pg5 on")
+        self.vapi.cli("packet mac-filter pg6 on")
+        self.vapi.cli("packet mac-filter pg7 on")
+
         tx = self.create_stream_ip4(self.pg0, "1.1.1.1", "232.1.1.1")
         self.pg0.add_stream(tx)
 
@@ -208,23 +220,23 @@ class TestIPMcast(VppTestCase):
             self,
             "0.0.0.0",
             "232.1.1.1", 32,
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg0.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD),
              VppMRoutePath(self.pg2.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD),
              VppMRoutePath(self.pg3.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD),
              VppMRoutePath(self.pg4.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD),
              VppMRoutePath(self.pg5.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD),
              VppMRoutePath(self.pg6.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD),
              VppMRoutePath(self.pg7.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD)])
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD)])
         route_232_1_1_1.add_vpp_config()
 
         #
@@ -235,13 +247,13 @@ class TestIPMcast(VppTestCase):
             self,
             "1.1.1.1",
             "232.1.1.1", 27,  # any grp-len is ok when src is set
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg0.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD),
              VppMRoutePath(self.pg2.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD)])
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD)])
         route_1_1_1_1_232_1_1_1.add_vpp_config()
 
         #
@@ -253,14 +265,14 @@ class TestIPMcast(VppTestCase):
             self,
             "1.1.1.1",
             "232.1.1.2", 64,
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg0.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD,
                            nh=self.pg1.remote_ip4),
              VppMRoutePath(self.pg2.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD,
                            nh=self.pg2.remote_ip4)])
         route_1_1_1_1_232_1_1_2.add_vpp_config()
 
@@ -272,11 +284,11 @@ class TestIPMcast(VppTestCase):
             self,
             "0.0.0.0",
             "232.0.0.0", 8,
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg0.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD)])
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD)])
         route_232.add_vpp_config()
 
         #
@@ -395,9 +407,27 @@ class TestIPMcast(VppTestCase):
         self.pg0.assert_nothing_captured(
             remark="IP multicast packets forwarded on PG0")
 
+        self.vapi.cli("packet mac-filter pg0 off")
+        self.vapi.cli("packet mac-filter pg1 off")
+        self.vapi.cli("packet mac-filter pg2 off")
+        self.vapi.cli("packet mac-filter pg4 off")
+        self.vapi.cli("packet mac-filter pg5 off")
+        self.vapi.cli("packet mac-filter pg6 off")
+        self.vapi.cli("packet mac-filter pg7 off")
+
     def test_ip6_mcast(self):
         """ IPv6 Multicast Replication """
 
+        MRouteItfFlags = VppEnum.vl_api_mfib_itf_flags_t
+        MRouteEntryFlags = VppEnum.vl_api_mfib_entry_flags_t
+
+        self.vapi.cli("packet mac-filter pg0 on")
+        self.vapi.cli("packet mac-filter pg1 on")
+        self.vapi.cli("packet mac-filter pg2 on")
+        self.vapi.cli("packet mac-filter pg4 on")
+        self.vapi.cli("packet mac-filter pg5 on")
+        self.vapi.cli("packet mac-filter pg6 on")
+        self.vapi.cli("packet mac-filter pg7 on")
         #
         # a stream that matches the default route. gets dropped.
         #
@@ -419,18 +449,18 @@ class TestIPMcast(VppTestCase):
             self,
             "::",
             "ff01::1", 128,
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg0.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT,
                            proto=FibPathProto.FIB_PATH_NH_PROTO_IP6),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD,
                            proto=FibPathProto.FIB_PATH_NH_PROTO_IP6),
              VppMRoutePath(self.pg2.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD,
                            proto=FibPathProto.FIB_PATH_NH_PROTO_IP6),
              VppMRoutePath(self.pg3.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD,
                            proto=FibPathProto.FIB_PATH_NH_PROTO_IP6)])
         route_ff01_1.add_vpp_config()
 
@@ -442,15 +472,15 @@ class TestIPMcast(VppTestCase):
             self,
             "2001::1",
             "ff01::1", 0,  # any grp-len is ok when src is set
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg0.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT,
                            proto=FibPathProto.FIB_PATH_NH_PROTO_IP6),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD,
                            proto=FibPathProto.FIB_PATH_NH_PROTO_IP6),
              VppMRoutePath(self.pg2.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD,
                            proto=FibPathProto.FIB_PATH_NH_PROTO_IP6)])
         route_2001_ff01_1.add_vpp_config()
 
@@ -462,12 +492,12 @@ class TestIPMcast(VppTestCase):
             self,
             "::",
             "ff01::", 16,
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg0.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT,
                            proto=FibPathProto.FIB_PATH_NH_PROTO_IP6),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD,
                            proto=FibPathProto.FIB_PATH_NH_PROTO_IP6)])
         route_ff01.add_vpp_config()
 
@@ -556,6 +586,14 @@ class TestIPMcast(VppTestCase):
         self.pg3.assert_nothing_captured(
             remark="IP multicast packets forwarded on PG3")
 
+        self.vapi.cli("packet mac-filter pg0 off")
+        self.vapi.cli("packet mac-filter pg1 off")
+        self.vapi.cli("packet mac-filter pg2 off")
+        self.vapi.cli("packet mac-filter pg4 off")
+        self.vapi.cli("packet mac-filter pg5 off")
+        self.vapi.cli("packet mac-filter pg6 off")
+        self.vapi.cli("packet mac-filter pg7 off")
+
     def _mcast_connected_send_stream(self, dst_ip):
         self.vapi.cli("clear trace")
         tx = self.create_stream_ip4(self.pg0,
@@ -574,6 +612,9 @@ class TestIPMcast(VppTestCase):
     def test_ip_mcast_connected(self):
         """ IP Multicast Connected Source check """
 
+        MRouteItfFlags = VppEnum.vl_api_mfib_itf_flags_t
+        MRouteEntryFlags = VppEnum.vl_api_mfib_entry_flags_t
+
         #
         # A (*,G).
         # one accepting interface, pg0, 1 forwarding interfaces
@@ -582,15 +623,15 @@ class TestIPMcast(VppTestCase):
             self,
             "0.0.0.0",
             "232.1.1.1", 32,
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg0.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD)])
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD)])
 
         route_232_1_1_1.add_vpp_config()
         route_232_1_1_1.update_entry_flags(
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_CONNECTED)
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_CONNECTED)
 
         #
         # Now the (*,G) is present, send from connected source
@@ -632,15 +673,15 @@ class TestIPMcast(VppTestCase):
             self,
             "0.0.0.0",
             "232.1.1.2", 32,
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg0.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD)])
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD)])
 
         route_232_1_1_2.add_vpp_config()
         route_232_1_1_2.update_entry_flags(
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_CONNECTED)
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_CONNECTED)
 
         #
         # Send traffic to both entries. One read should net us two signals
@@ -663,12 +704,15 @@ class TestIPMcast(VppTestCase):
         signal_232_1_1_2_itf_0.compare(signals[0])
 
         route_232_1_1_1.update_entry_flags(
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE)
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE)
         route_232_1_1_2.update_entry_flags(
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE)
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE)
 
     def test_ip_mcast_signal(self):
         """ IP Multicast Signal """
+
+        MRouteItfFlags = VppEnum.vl_api_mfib_itf_flags_t
+        MRouteEntryFlags = VppEnum.vl_api_mfib_entry_flags_t
 
         #
         # A (*,G).
@@ -678,16 +722,16 @@ class TestIPMcast(VppTestCase):
             self,
             "0.0.0.0",
             "232.1.1.1", 32,
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg0.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD)])
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD)])
 
         route_232_1_1_1.add_vpp_config()
 
         route_232_1_1_1.update_entry_flags(
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_SIGNAL)
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_SIGNAL)
 
         #
         # Now the (*,G) is present, send from connected source
@@ -727,8 +771,8 @@ class TestIPMcast(VppTestCase):
         #
         route_232_1_1_1.update_path_flags(
             self.pg0.sw_if_index,
-            (MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT |
-             MRouteItfFlags.MFIB_ITF_FLAG_NEGATE_SIGNAL))
+            (MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT |
+             MRouteItfFlags.MFIB_API_ITF_FLAG_NEGATE_SIGNAL))
 
         self.vapi.cli("clear trace")
         tx = self._mcast_connected_send_stream("232.1.1.1")
@@ -741,7 +785,7 @@ class TestIPMcast(VppTestCase):
         # come back since the interface is still NEGATE-SIGNAL
         #
         route_232_1_1_1.update_entry_flags(
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE)
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE)
 
         tx = self._mcast_connected_send_stream("232.1.1.1")
 
@@ -753,8 +797,9 @@ class TestIPMcast(VppTestCase):
         # Lastly remove the NEGATE-SIGNAL from the interface and the
         # signals should stop
         #
-        route_232_1_1_1.update_path_flags(self.pg0.sw_if_index,
-                                          MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT)
+        route_232_1_1_1.update_path_flags(
+            self.pg0.sw_if_index,
+            MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT)
 
         tx = self._mcast_connected_send_stream("232.1.1.1")
         signals = self.vapi.mfib_signal_dump()
@@ -762,6 +807,9 @@ class TestIPMcast(VppTestCase):
 
     def test_ip_mcast_vrf(self):
         """ IP Multicast Replication in non-default table"""
+
+        MRouteItfFlags = VppEnum.vl_api_mfib_itf_flags_t
+        MRouteEntryFlags = VppEnum.vl_api_mfib_entry_flags_t
 
         #
         # An (S,G).
@@ -771,13 +819,13 @@ class TestIPMcast(VppTestCase):
             self,
             "1.1.1.1",
             "232.1.1.1", 64,
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg8.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD),
              VppMRoutePath(self.pg2.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD)],
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD)],
             table_id=10)
         route_1_1_1_1_232_1_1_1.add_vpp_config()
 
@@ -798,6 +846,9 @@ class TestIPMcast(VppTestCase):
 
     def test_ip_mcast_gre(self):
         """ IP Multicast Replication over GRE"""
+
+        MRouteItfFlags = VppEnum.vl_api_mfib_itf_flags_t
+        MRouteEntryFlags = VppEnum.vl_api_mfib_entry_flags_t
 
         gre_if_1 = VppGreInterface(
             self,
@@ -827,13 +878,13 @@ class TestIPMcast(VppTestCase):
             self,
             "1.1.1.1",
             "232.2.2.2", 64,
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(gre_if_1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT),
              VppMRoutePath(gre_if_2.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD),
              VppMRoutePath(gre_if_3.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD)])
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD)])
         route_1_1_1_1_232_1_1_1.add_vpp_config()
 
         #
@@ -872,6 +923,9 @@ class TestIPMcast(VppTestCase):
     def test_ip6_mcast_vrf(self):
         """ IPv6 Multicast Replication in non-default table"""
 
+        MRouteItfFlags = VppEnum.vl_api_mfib_itf_flags_t
+        MRouteEntryFlags = VppEnum.vl_api_mfib_entry_flags_t
+
         #
         # An (S,G).
         # one accepting interface, pg0, 2 forwarding interfaces
@@ -880,15 +934,15 @@ class TestIPMcast(VppTestCase):
             self,
             "2001::1",
             "ff01::1", 256,
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg8.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT,
                            proto=FibPathProto.FIB_PATH_NH_PROTO_IP6),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD,
                            proto=FibPathProto.FIB_PATH_NH_PROTO_IP6),
              VppMRoutePath(self.pg2.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD,
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD,
                            proto=FibPathProto.FIB_PATH_NH_PROTO_IP6)],
             table_id=10)
         route_2001_ff01_1.add_vpp_config()
@@ -910,6 +964,9 @@ class TestIPMcast(VppTestCase):
     def test_bidir(self):
         """ IP Multicast Bi-directional """
 
+        MRouteItfFlags = VppEnum.vl_api_mfib_itf_flags_t
+        MRouteEntryFlags = VppEnum.vl_api_mfib_entry_flags_t
+
         #
         # A (*,G). The set of accepting interfaces matching the forwarding
         #
@@ -917,19 +974,19 @@ class TestIPMcast(VppTestCase):
             self,
             "0.0.0.0",
             "232.1.1.1", 32,
-            MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+            MRouteEntryFlags.MFIB_API_ENTRY_FLAG_NONE,
             [VppMRoutePath(self.pg0.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT |
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT |
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD),
              VppMRoutePath(self.pg1.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT |
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT |
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD),
              VppMRoutePath(self.pg2.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT |
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT |
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD),
              VppMRoutePath(self.pg3.sw_if_index,
-                           MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT |
-                           MRouteItfFlags.MFIB_ITF_FLAG_FORWARD)])
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_ACCEPT |
+                           MRouteItfFlags.MFIB_API_ITF_FLAG_FORWARD)])
         route_232_1_1_1.add_vpp_config()
 
         tx = self.create_stream_ip4(self.pg0, "1.1.1.1", "232.1.1.1")

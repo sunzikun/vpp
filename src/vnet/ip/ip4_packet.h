@@ -43,6 +43,7 @@
 #include <vnet/ip/ip_packet.h>	/* for ip_csum_t */
 #include <vnet/tcp/tcp_packet.h>	/* for tcp_header_t */
 #include <vppinfra/byte_order.h>	/* for clib_net_to_host_u16 */
+#include <vppinfra/warnings.h>	/* for WARN_OFF/WARN_ON macro */
 
 /* IP4 address which can be accessed either as 4 bytes
    or as a 32-bit number. */
@@ -82,52 +83,6 @@ typedef struct
 {
   ip4_address_t addr, mask;
 } ip4_address_and_mask_t;
-
-/* If address is a valid netmask, return length of mask. */
-always_inline uword
-ip4_address_netmask_length (const ip4_address_t * a)
-{
-  uword result = 0;
-  uword i;
-  for (i = 0; i < ARRAY_LEN (a->as_u8); i++)
-    {
-      switch (a->as_u8[i])
-	{
-	case 0xff:
-	  result += 8;
-	  break;
-	case 0xfe:
-	  result += 7;
-	  goto done;
-	case 0xfc:
-	  result += 6;
-	  goto done;
-	case 0xf8:
-	  result += 5;
-	  goto done;
-	case 0xf0:
-	  result += 4;
-	  goto done;
-	case 0xe0:
-	  result += 3;
-	  goto done;
-	case 0xc0:
-	  result += 2;
-	  goto done;
-	case 0x80:
-	  result += 1;
-	  goto done;
-	case 0x00:
-	  result += 0;
-	  goto done;
-	default:
-	  /* Not a valid netmask mask. */
-	  return ~0;
-	}
-    }
-done:
-  return result;
-}
 
 typedef union
 {
@@ -243,25 +198,122 @@ ip4_next_header (ip4_header_t * i)
   return (void *) i + ip4_header_bytes (i);
 }
 
+/* Turn off array bounds check due to ip4_header_t
+   option field operations. */
+
+/* *INDENT-OFF* */
+WARN_OFF(array-bounds)
+/* *INDENT-ON* */
+
+static_always_inline u16
+ip4_header_checksum_inline (ip4_header_t * i, int with_checksum)
+{
+  int option_len = (i->ip_version_and_header_length & 0xf) - 5;
+  uword sum = 0;
+#if uword_bits == 64
+  u32 *iphdr = (u32 *) i;
+
+  sum += iphdr[0];
+  sum += iphdr[1];
+  sum += with_checksum ? iphdr[2] : *(u16 *) (iphdr + 2);
+  /* skip checksum */
+  sum += iphdr[3];
+  sum += iphdr[4];
+
+  if (PREDICT_FALSE (option_len > 0))
+    switch (option_len)
+      {
+      case 10:
+	sum += iphdr[14];
+      case 9:
+	sum += iphdr[13];
+      case 8:
+	sum += iphdr[12];
+      case 7:
+	sum += iphdr[11];
+      case 6:
+	sum += iphdr[10];
+      case 5:
+	sum += iphdr[9];
+      case 4:
+	sum += iphdr[8];
+      case 3:
+	sum += iphdr[7];
+      case 2:
+	sum += iphdr[6];
+      case 1:
+	sum += iphdr[5];
+      default:
+	break;
+      }
+
+  sum = ((u32) sum) + (sum >> 32);
+#else
+  u16 *iphdr = (u16 *) i;
+
+  sum += iphdr[0];
+  sum += iphdr[1];
+  sum += iphdr[2];
+  sum += iphdr[3];
+  sum += iphdr[4];
+  if (with_checksum)
+    sum += iphdr[5];
+  sum += iphdr[6];
+  sum += iphdr[7];
+  sum += iphdr[8];
+  sum += iphdr[9];
+
+  if (PREDICT_FALSE (option_len > 0))
+    switch (option_len)
+      {
+      case 10:
+	sum += iphdr[28];
+	sum += iphdr[29];
+      case 9:
+	sum += iphdr[26];
+	sum += iphdr[27];
+      case 8:
+	sum += iphdr[24];
+	sum += iphdr[25];
+      case 7:
+	sum += iphdr[22];
+	sum += iphdr[23];
+      case 6:
+	sum += iphdr[20];
+	sum += iphdr[21];
+      case 5:
+	sum += iphdr[18];
+	sum += iphdr[19];
+      case 4:
+	sum += iphdr[16];
+	sum += iphdr[17];
+      case 3:
+	sum += iphdr[14];
+	sum += iphdr[15];
+      case 2:
+	sum += iphdr[12];
+	sum += iphdr[13];
+      case 1:
+	sum += iphdr[10];
+	sum += iphdr[11];
+      default:
+	break;
+      }
+#endif
+
+  sum = ((u16) sum) + (sum >> 16);
+  sum = ((u16) sum) + (sum >> 16);
+  return ~((u16) sum);
+}
+
+/* *INDENT-OFF* */
+WARN_ON(array-bounds)
+/* *INDENT-ON* */
+
 always_inline u16
 ip4_header_checksum (ip4_header_t * i)
 {
-  u16 save, csum;
-  ip_csum_t sum;
-
-  save = i->checksum;
-  i->checksum = 0;
-  sum = ip_incremental_checksum (0, i, ip4_header_bytes (i));
-  csum = ~ip_csum_fold (sum);
-
-  i->checksum = save;
-
-  /* Make checksum agree for special case where either
-     0 or 0xffff would give same 1s complement sum. */
-  if (csum == 0 && save == 0xffff)
-    csum = save;
-
-  return csum;
+  return ip4_header_checksum_inline (i, /* with_checksum */ 0);
 }
 
 always_inline void
@@ -331,7 +383,7 @@ ip4_header_get_df (const ip4_header_t * ip4)
 static inline uword
 ip4_header_checksum_is_valid (ip4_header_t * i)
 {
-  return i->checksum == ip4_header_checksum (i);
+  return ip4_header_checksum_inline (i, /* with_checksum */ 1) == 0;
 }
 
 #define ip4_partial_header_checksum_x1(ip0,sum0)			\

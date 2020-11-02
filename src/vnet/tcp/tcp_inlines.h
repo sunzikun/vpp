@@ -182,7 +182,7 @@ tcp_available_cc_snd_space (const tcp_connection_t * tc)
 always_inline u8
 tcp_is_lost_fin (tcp_connection_t * tc)
 {
-  if ((tc->flags & TCP_CONN_FINSNT) && (tc->snd_una_max - tc->snd_una == 1))
+  if ((tc->flags & TCP_CONN_FINSNT) && (tc->snd_nxt - tc->snd_una == 1))
     return 1;
   return 0;
 }
@@ -218,9 +218,7 @@ tcp_time_now_us (u32 thread_index)
 always_inline u32
 tcp_set_time_now (tcp_worker_ctx_t * wrk)
 {
-  tcp_main_t *tm = &tcp_main;
-  wrk->time_now = (u64) (clib_cpu_time_now () * tm->tstamp_ticks_per_clock);
-  return wrk->time_now;
+  return wrk->time_now = (u64) (vlib_time_now (wrk->vm) * TCP_TSTP_HZ);
 }
 
 always_inline tcp_connection_t *

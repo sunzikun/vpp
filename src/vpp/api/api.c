@@ -39,7 +39,6 @@
 #include <vppinfra/bitmap.h>
 #include <vppinfra/fifo.h>
 #include <vppinfra/time.h>
-#include <vppinfra/mheap.h>
 #include <vppinfra/heap.h>
 #include <vppinfra/pool.h>
 #include <vppinfra/format.h>
@@ -342,7 +341,7 @@ vl_api_get_node_index_t_handler (vl_api_get_node_index_t * mp)
   /* *INDENT-OFF* */
   REPLY_MACRO2(VL_API_GET_NODE_INDEX_REPLY,
   ({
-    rmp->node_index = ntohl(node_index);
+    rmp->node_index = htonl(node_index);
   }));
   /* *INDENT-ON* */
 }
@@ -389,7 +388,7 @@ out:
   /* *INDENT-OFF* */
   REPLY_MACRO2(VL_API_GET_NEXT_INDEX_REPLY,
   ({
-    rmp->next_index = ntohl(next_index);
+    rmp->next_index = htonl(next_index);
   }));
   /* *INDENT-ON* */
 }
@@ -420,9 +419,9 @@ vl_api_add_node_next_t_handler (vl_api_add_node_next_t * mp)
 
 out:
   /* *INDENT-OFF* */
-  REPLY_MACRO2(VL_API_GET_NODE_INDEX_REPLY,
+  REPLY_MACRO2(VL_API_ADD_NODE_NEXT_REPLY,
   ({
-    rmp->next_index = ntohl(next_index);
+    rmp->next_index = htonl(next_index);
   }));
   /* *INDENT-ON* */
 }

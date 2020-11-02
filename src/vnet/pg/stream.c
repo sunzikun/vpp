@@ -139,6 +139,39 @@ pg_interface_admin_up_down (vnet_main_t * vnm, u32 hw_if_index, u32 flags)
   return 0;
 }
 
+static int
+pg_mac_address_cmp (const mac_address_t * m1, const mac_address_t * m2)
+{
+  return (!mac_address_cmp (m1, m2));
+}
+
+static clib_error_t *
+pg_add_del_mac_address (vnet_hw_interface_t * hi,
+			const u8 * address, u8 is_add)
+{
+  pg_main_t *pg = &pg_main;
+
+  if (ethernet_address_cast (address))
+    {
+      mac_address_t mac;
+      pg_interface_t *pi;
+
+      pi = pool_elt_at_index (pg->interfaces, hi->dev_instance);
+
+      mac_address_from_bytes (&mac, address);
+      if (is_add)
+	vec_add1 (pi->allowed_mcast_macs, mac);
+      else
+	{
+	  u32 pos = vec_search_with_function (pi->allowed_mcast_macs, &mac,
+					      pg_mac_address_cmp);
+	  if (~0 != pos)
+	    vec_del1 (pi->allowed_mcast_macs, pos);
+	}
+    }
+  return (NULL);
+}
+
 /* *INDENT-OFF* */
 VNET_DEVICE_CLASS (pg_dev_class) = {
   .name = "pg",
@@ -146,6 +179,7 @@ VNET_DEVICE_CLASS (pg_dev_class) = {
   .format_device_name = format_pg_interface_name,
   .format_tx_trace = format_pg_output_trace,
   .admin_up_down_function = pg_interface_admin_up_down,
+  .mac_addr_add_del_function = pg_add_del_mac_address,
 };
 /* *INDENT-ON* */
 
@@ -178,9 +212,26 @@ pg_eth_flag_change (vnet_main_t * vnm, vnet_hw_interface_t * hi, u32 flags)
   return 0;
 }
 
+void
+pg_interface_enable_disable_coalesce (pg_interface_t * pi, u8 enable,
+				      u32 tx_node_index)
+{
+  if (enable)
+    {
+      gro_flow_table_init (&pi->flow_table, 1 /* is_l2 */ ,
+			   tx_node_index);
+      pi->coalesce_enabled = 1;
+    }
+  else
+    {
+      pi->coalesce_enabled = 0;
+      gro_flow_table_free (pi->flow_table);
+    }
+}
+
 u32
 pg_interface_add_or_get (pg_main_t * pg, uword if_id, u8 gso_enabled,
-			 u32 gso_size)
+			 u32 gso_size, u8 coalesce_enabled)
 {
   vnet_main_t *vnm = vnet_get_main ();
   vlib_main_t *vm = vlib_get_main ();
@@ -219,10 +270,17 @@ pg_interface_add_or_get (pg_main_t * pg, uword if_id, u8 gso_enabled,
 	  hi->flags |= VNET_HW_INTERFACE_FLAG_SUPPORTS_GSO;
 	  pi->gso_enabled = 1;
 	  pi->gso_size = gso_size;
+	  if (coalesce_enabled)
+	    {
+	      pg_interface_enable_disable_coalesce (pi, 1, hi->tx_node_index);
+	    }
 	}
       pi->sw_if_index = hi->sw_if_index;
 
       hash_set (pg->if_index_by_if_id, if_id, i);
+
+      vec_validate (pg->if_id_by_sw_if_index, hi->sw_if_index);
+      pg->if_id_by_sw_if_index[hi->sw_if_index] = i;
 
       if (vlib_num_workers ())
 	{
@@ -454,7 +512,7 @@ pg_stream_add (pg_main_t * pg, pg_stream_t * s_init)
   /* Find an interface to use. */
   s->pg_if_index =
     pg_interface_add_or_get (pg, s->if_id, 0 /* gso_enabled */ ,
-			     0 /* gso_size */ );
+			     0 /* gso_size */ , 0 /* coalesce_enabled */ );
 
   if (s->sw_if_index[VLIB_RX] == ~0)
     {

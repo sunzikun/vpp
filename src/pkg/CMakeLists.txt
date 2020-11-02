@@ -11,6 +11,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+if(CMAKE_CROSSCOMPILING)
+  return()
+endif()
+
 get_cmake_property(VPP_COMPONENTS COMPONENTS)
 string(REPLACE ";" " " VPP_COMPONENTS "${VPP_COMPONENTS}")
 
@@ -54,7 +58,7 @@ foreach(f copyright vpp.preinst vpp.postrm vpp.postinst vpp.service)
   )
 endforeach()
 
-file(WRITE ${CMAKE_BINARY_DIR}/debian/compat "9\n")
+file(WRITE ${CMAKE_BINARY_DIR}/debian/compat "10\n")
 
 add_custom_target(package-deb
   COMMENT "Building .deb packages..."

@@ -21,8 +21,6 @@
 #include <net/if.h>
 #include <linux/if_tun.h>
 #include <sys/ioctl.h>
-#include <linux/virtio_net.h>
-#include <linux/vhost.h>
 #include <sys/eventfd.h>
 
 #include <vlib/vlib.h>
@@ -55,7 +53,8 @@ call_read_ready (clib_file_t * uf)
 
   CLIB_UNUSED (ssize_t size) = read (uf->file_descriptor, &b, sizeof (b));
   if ((qid & 1) == 0)
-    vnet_device_input_set_interrupt_pending (vnm, vif->hw_if_index, qid);
+    vnet_device_input_set_interrupt_pending (vnm, vif->hw_if_index,
+					     RX_QUEUE_ACCESS (qid));
 
   return 0;
 }
@@ -92,19 +91,19 @@ virtio_vring_init (vlib_main_t * vm, virtio_if_t * vif, u16 idx, u16 sz)
 			    CLIB_CACHE_LINE_BYTES);
       vring = vec_elt_at_index (vif->rxq_vrings, RX_QUEUE_ACCESS (idx));
     }
-  i = sizeof (struct vring_desc) * sz;
+  i = sizeof (vring_desc_t) * sz;
   i = round_pow2 (i, CLIB_CACHE_LINE_BYTES);
   vring->desc = clib_mem_alloc_aligned (i, CLIB_CACHE_LINE_BYTES);
   clib_memset (vring->desc, 0, i);
 
-  i = sizeof (struct vring_avail) + sz * sizeof (vring->avail->ring[0]);
+  i = sizeof (vring_avail_t) + sz * sizeof (vring->avail->ring[0]);
   i = round_pow2 (i, CLIB_CACHE_LINE_BYTES);
   vring->avail = clib_mem_alloc_aligned (i, CLIB_CACHE_LINE_BYTES);
   clib_memset (vring->avail, 0, i);
   // tell kernel that we don't need interrupt
-  vring->avail->flags = VIRTIO_RING_FLAG_MASK_INT;
+  vring->avail->flags = VRING_AVAIL_F_NO_INTERRUPT;
 
-  i = sizeof (struct vring_used) + sz * sizeof (struct vring_used_elem);
+  i = sizeof (vring_used_t) + sz * sizeof (vring_used_elem_t);
   i = round_pow2 (i, CLIB_CACHE_LINE_BYTES);
   vring->used = clib_mem_alloc_aligned (i, CLIB_CACHE_LINE_BYTES);
   clib_memset (vring->used, 0, i);
@@ -185,7 +184,7 @@ virtio_free_used_desc (vlib_main_t * vm, virtio_vring_t * vring)
 
   while (n_left)
     {
-      struct vring_used_elem *e = &vring->used->ring[last & mask];
+      vring_used_elem_t *e = &vring->used->ring[last & mask];
       u16 slot = e->id;
 
       vlib_buffer_free (vm, &vring->buffers[slot], 1);
@@ -216,8 +215,47 @@ virtio_vring_free_tx (vlib_main_t * vm, virtio_if_t * vif, u32 idx)
   if (vring->avail)
     clib_mem_free (vring->avail);
   vec_free (vring->buffers);
+  gro_flow_table_free (vring->flow_table);
+  virtio_vring_buffering_free (vm, vring->buffering);
   clib_spinlock_free (&vring->lockp);
   return 0;
+}
+
+void
+virtio_set_packet_coalesce (virtio_if_t * vif)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_hw_interface_t *hw = vnet_get_hw_interface (vnm, vif->hw_if_index);
+  virtio_vring_t *vring;
+  vif->packet_coalesce = 1;
+  vec_foreach (vring, vif->txq_vrings)
+  {
+    gro_flow_table_init (&vring->flow_table,
+			 vif->type & (VIRTIO_IF_TYPE_TAP |
+				      VIRTIO_IF_TYPE_PCI), hw->tx_node_index);
+  }
+}
+
+clib_error_t *
+virtio_set_packet_buffering (virtio_if_t * vif, u16 buffering_size)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_hw_interface_t *hw = vnet_get_hw_interface (vnm, vif->hw_if_index);
+  virtio_vring_t *vring;
+  clib_error_t *error = 0;
+  vif->packet_buffering = 1;
+
+  vec_foreach (vring, vif->txq_vrings)
+  {
+    if ((error =
+	 virtio_vring_buffering_init (&vring->buffering, hw->tx_node_index,
+				      buffering_size)))
+      {
+	break;
+      }
+  }
+
+  return error;
 }
 
 void
@@ -241,9 +279,9 @@ virtio_set_net_hdr_size (virtio_if_t * vif)
 {
   if (vif->features & VIRTIO_FEATURE (VIRTIO_NET_F_MRG_RXBUF) ||
       vif->features & VIRTIO_FEATURE (VIRTIO_F_VERSION_1))
-    vif->virtio_net_hdr_sz = sizeof (struct virtio_net_hdr_v1);
+    vif->virtio_net_hdr_sz = sizeof (virtio_net_hdr_v1_t);
   else
-    vif->virtio_net_hdr_sz = sizeof (struct virtio_net_hdr);
+    vif->virtio_net_hdr_sz = sizeof (virtio_net_hdr_t);
 }
 
 inline void
@@ -319,6 +357,8 @@ virtio_show (vlib_main_t * vm, u32 * hw_if_indices, u8 show_descr, u32 type)
 	}
       vlib_cli_output (vm, "  gso-enabled %d", vif->gso_enabled);
       vlib_cli_output (vm, "  csum-enabled %d", vif->csum_offload_enabled);
+      vlib_cli_output (vm, "  packet-coalesce %d", vif->packet_coalesce);
+      vlib_cli_output (vm, "  packet-buffering %d", vif->packet_buffering);
       if (type & (VIRTIO_IF_TYPE_TAP | VIRTIO_IF_TYPE_PCI))
 	vlib_cli_output (vm, "  Mac Address: %U", format_ethernet_address,
 			 vif->mac_addr);
@@ -385,7 +425,7 @@ virtio_show (vlib_main_t * vm, u32 * hw_if_indices, u8 show_descr, u32 type)
 			     "  ===== ================== ===== ====== ===== ==================\n");
 	    for (j = 0; j < vring->size; j++)
 	      {
-		struct vring_desc *desc = &vring->desc[j];
+		vring_desc_t *desc = &vring->desc[j];
 		vlib_cli_output (vm,
 				 "  %-5d 0x%016lx %-5d 0x%04x %-5d 0x%016lx\n",
 				 j, desc->addr,
@@ -411,6 +451,16 @@ virtio_show (vlib_main_t * vm, u32 * hw_if_indices, u8 show_descr, u32 type)
 	    vlib_cli_output (vm, "    kickfd %d, callfd %d", vring->kick_fd,
 			     vring->call_fd);
 	  }
+	if (vring->flow_table)
+	  {
+	    vlib_cli_output (vm, "    %U", gro_flow_table_format,
+			     vring->flow_table);
+	  }
+	if (vif->packet_buffering)
+	  {
+	    vlib_cli_output (vm, "    %U", virtio_vring_buffering_format,
+			     vring->buffering);
+	  }
 	if (show_descr)
 	  {
 	    vlib_cli_output (vm, "\n  descriptor table:\n");
@@ -420,7 +470,7 @@ virtio_show (vlib_main_t * vm, u32 * hw_if_indices, u8 show_descr, u32 type)
 			     "  ===== ================== ===== ====== ===== ==================\n");
 	    for (j = 0; j < vring->size; j++)
 	      {
-		struct vring_desc *desc = &vring->desc[j];
+		vring_desc_t *desc = &vring->desc[j];
 		vlib_cli_output (vm,
 				 "  %-5d 0x%016lx %-5d 0x%04x %-5d 0x%016lx\n",
 				 j, desc->addr,
@@ -456,7 +506,7 @@ virtio_show (vlib_main_t * vm, u32 * hw_if_indices, u8 show_descr, u32 type)
 			       "  ===== ================== ===== ====== ===== ==================\n");
 	      for (j = 0; j < vring->size; j++)
 		{
-		  struct vring_desc *desc = &vring->desc[j];
+		  vring_desc_t *desc = &vring->desc[j];
 		  vlib_cli_output (vm,
 				   "  %-5d 0x%016lx %-5d 0x%04x %-5d 0x%016lx\n",
 				   j, desc->addr,

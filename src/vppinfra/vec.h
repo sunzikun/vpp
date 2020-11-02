@@ -119,7 +119,7 @@ void *vec_resize_allocate_memory (void *v,
 #define _vec_resize_numa(V,L,DB,HB,A,S)					\
 ({									\
   __typeof__ ((V)) _V;							\
-  _V = _vec_resize_inline(V,L,DB,HB,clib_max((__alignof__((V)[0])),(A)),(S)); \
+  _V = _vec_resize_inline((void *)V,L,DB,HB,clib_max((__alignof__((V)[0])),(A)),(S)); \
   _V;									\
 })
 
@@ -378,6 +378,8 @@ do {						\
     @return V (value-result parameter, V=0)
 */
 #define vec_free(V) vec_free_h(V,0)
+
+void vec_free_not_inline (void *v);
 
 /**\brief Free vector user header (syntactic sugar)
    @param h vector header

@@ -299,6 +299,11 @@ class VppTestCase(unittest.TestCase):
             return 0
 
     @classmethod
+    def force_solo(cls):
+        """ if the test case class is timing-sensitive - return true """
+        return False
+
+    @classmethod
     def instance(cls):
         """Return the instance of this testcase"""
         return cls.test_instance
@@ -414,6 +419,8 @@ class VppTestCase(unittest.TestCase):
                            "plugins",
                            "{", "plugin", "dpdk_plugin.so", "{", "disable",
                            "}", "plugin", "rdma_plugin.so", "{", "disable",
+                           "}", "plugin", "lisp_unittest_plugin.so", "{",
+                           "enable",
                            "}", "plugin", "unittest_plugin.so", "{", "enable",
                            "}"] + cls.extra_vpp_plugin_config + ["}", ]
 
@@ -1412,9 +1419,19 @@ class VppTestResult(unittest.TestResult):
         """
 
         def print_header(test):
+            test_doc = getdoc(test)
+            if not test_doc:
+                raise Exception("No doc string for test '%s'" % test.id())
+            test_title = test_doc.splitlines()[0]
+            test_title_colored = colorize(test_title, GREEN)
+            if test.force_solo():
+                # long live PEP-8 and 80 char width limitation...
+                c = YELLOW
+                test_title_colored = colorize("SOLO RUN: " + test_title, c)
+
             if not hasattr(test.__class__, '_header_printed'):
                 print(double_line_delim)
-                print(colorize(getdoc(test).splitlines()[0], GREEN))
+                print(test_title_colored)
                 print(double_line_delim)
             test.__class__._header_printed = True
 

@@ -70,6 +70,8 @@ CLIB_MARCH_FN (svm_fifo_copy_from_chunk, void, svm_fifo_t * f,
       c = c->next;
       while ((to_copy -= n_chunk))
 	{
+	  CLIB_MEM_UNPOISON (c, sizeof (*c));
+	  CLIB_MEM_UNPOISON (c->data, c->length);
 	  n_chunk = clib_min (c->length, to_copy);
 	  clib_memcpy_fast (dst + (len - to_copy), &c->data[0], n_chunk);
 	  c = c->length <= to_copy ? c->next : c;
@@ -1024,6 +1026,10 @@ svm_fifo_dequeue (svm_fifo_t * f, u32 len, u8 * dst)
   svm_fifo_copy_from_chunk (f, f->head_chunk, head, dst, len, &f->head_chunk);
   head = head + len;
 
+  /* In order dequeues are not supported in combination with ooo peeking.
+   * Use svm_fifo_dequeue_drop instead. */
+  ASSERT (rb_tree_n_nodes (&f->ooo_deq_lookup) <= 1);
+
   if (f_pos_geq (head, f_chunk_end (f->start_chunk)))
     fsh_collect_chunks (f->fs_hdr, f->slice_index,
 			f_unlink_chunks (f, head, 0));
@@ -1050,6 +1056,7 @@ svm_fifo_peek (svm_fifo_t * f, u32 offset, u32 len, u8 * dst)
   len = clib_min (cursize - offset, len);
   head_idx = head + offset;
 
+  CLIB_MEM_UNPOISON (f->ooo_deq, sizeof (*f->ooo_deq));
   if (!f->ooo_deq || !f_chunk_includes_pos (f->ooo_deq, head_idx))
     f_update_ooo_deq (f, head_idx, head_idx + len);
 
@@ -1132,9 +1139,12 @@ svm_fifo_fill_chunk_list (svm_fifo_t * f)
 }
 
 int
-svm_fifo_segments (svm_fifo_t * f, svm_fifo_seg_t * fs)
+svm_fifo_segments (svm_fifo_t * f, u32 offset, svm_fifo_seg_t * fs,
+		   u32 n_segs, u32 max_bytes)
 {
-  u32 cursize, head, tail, head_idx;
+  u32 cursize, to_read, head, tail, fs_index = 1;
+  u32 n_bytes, head_pos, len, start;
+  svm_fifo_chunk_t *c;
 
   f_load_head_tail_cons (f, &head, &tail);
 
@@ -1144,37 +1154,36 @@ svm_fifo_segments (svm_fifo_t * f, svm_fifo_seg_t * fs)
   if (PREDICT_FALSE (cursize == 0))
     return SVM_FIFO_EEMPTY;
 
-  head_idx = head;
+  if (offset >= cursize)
+    return SVM_FIFO_EEMPTY;
 
-  if (tail < head)
+  to_read = clib_min (cursize - offset, max_bytes);
+  start = head + offset;
+
+  if (!f->head_chunk)
+    f->head_chunk = svm_fifo_find_chunk (f, head);
+
+  c = f->head_chunk;
+
+  while (!f_chunk_includes_pos (c, start))
+    c = c->next;
+
+  head_pos = start - c->start_byte;
+  fs[0].data = c->data + head_pos;
+  fs[0].len = clib_min (c->length - head_pos, cursize - offset);
+  n_bytes = fs[0].len;
+
+  while (n_bytes < to_read && fs_index < n_segs)
     {
-      fs[0].len = f->size - head_idx;
-      fs[0].data = f->head_chunk->data + head_idx;
-      fs[1].len = cursize - fs[0].len;
-      fs[1].data = f->head_chunk->data;
+      c = c->next;
+      len = clib_min (c->length, to_read - n_bytes);
+      fs[fs_index].data = c->data;
+      fs[fs_index].len = len;
+      n_bytes += len;
+      fs_index += 1;
     }
-  else
-    {
-      fs[0].len = cursize;
-      fs[0].data = f->head_chunk->data + head_idx;
-      fs[1].len = 0;
-      fs[1].data = 0;
-    }
-  return cursize;
-}
 
-void
-svm_fifo_segments_free (svm_fifo_t * f, svm_fifo_seg_t * fs)
-{
-  u32 head;
-
-  /* consumer owned index */
-  head = f->head;
-
-  ASSERT (fs[0].data == f->head_chunk->data + head);
-  head = (head + fs[0].len + fs[1].len);
-  /* store-rel: consumer owned index (paired with load-acq in producer) */
-  clib_atomic_store_rel_n (&f->head, head);
+  return n_bytes;
 }
 
 /**
@@ -1403,7 +1412,7 @@ svm_fifo_replay (u8 * s, svm_fifo_t * f, u8 no_read, u8 verbose)
   u8 *data = 0;
   svm_fifo_trace_elem_t *trace;
   u32 offset;
-  svm_fifo_t *dummy_fifo;
+  svm_fifo_t *placeholder_fifo;
 
   if (!f)
     return s;
@@ -1416,7 +1425,7 @@ svm_fifo_replay (u8 * s, svm_fifo_t * f, u8 no_read, u8 verbose)
   trace_len = 0;
 #endif
 
-  dummy_fifo = svm_fifo_alloc (f->size);
+  placeholder_fifo = svm_fifo_alloc (f->size);
   svm_fifo_init (f, f->size);
   clib_memset (f->head_chunk->data, 0xFF, f->size);
   vec_validate (data, f->size);
@@ -1431,26 +1440,26 @@ svm_fifo_replay (u8 * s, svm_fifo_t * f, u8 no_read, u8 verbose)
 	  if (verbose)
 	    s = format (s, "adding [%u, %u]:", trace[i].offset,
 			(trace[i].offset + trace[i].len));
-	  svm_fifo_enqueue_with_offset (dummy_fifo, trace[i].offset,
+	  svm_fifo_enqueue_with_offset (placeholder_fifo, trace[i].offset,
 					trace[i].len, &data[offset]);
 	}
       else if (trace[i].action == 2)
 	{
 	  if (verbose)
 	    s = format (s, "adding [%u, %u]:", 0, trace[i].len);
-	  svm_fifo_enqueue (dummy_fifo, trace[i].len, &data[offset]);
+	  svm_fifo_enqueue (placeholder_fifo, trace[i].len, &data[offset]);
 	}
       else if (!no_read)
 	{
 	  if (verbose)
 	    s = format (s, "read: %u", trace[i].len);
-	  svm_fifo_dequeue_drop (dummy_fifo, trace[i].len);
+	  svm_fifo_dequeue_drop (placeholder_fifo, trace[i].len);
 	}
       if (verbose)
-	s = format (s, "%U", format_svm_fifo, dummy_fifo, 1);
+	s = format (s, "%U", format_svm_fifo, placeholder_fifo, 1);
     }
 
-  s = format (s, "result: %U", format_svm_fifo, dummy_fifo, 1);
+  s = format (s, "result: %U", format_svm_fifo, placeholder_fifo, 1);
 
   return s;
 }

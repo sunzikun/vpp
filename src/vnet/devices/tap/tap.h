@@ -28,7 +28,9 @@
   _ (PERSIST, 2)             \
   _ (ATTACH, 3)              \
   _ (TUN, 4)                 \
-  _ (GRO_COALESCE, 5)
+  _ (GRO_COALESCE, 5)        \
+  _ (PACKED, 6)              \
+  _ (IN_ORDER, 7)
 
 typedef enum
 {
@@ -101,7 +103,7 @@ typedef struct
 void tap_create_if (vlib_main_t * vm, tap_create_if_args_t * args);
 int tap_delete_if (vlib_main_t * vm, u32 sw_if_index);
 int tap_gso_enable_disable (vlib_main_t * vm, u32 sw_if_index,
-			    int enable_disable);
+			    int enable_disable, int packet_coalesce);
 int
 tap_csum_offload_enable_disable (vlib_main_t * vm, u32 sw_if_index,
 				 int enable_disable);

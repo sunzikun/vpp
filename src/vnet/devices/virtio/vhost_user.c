@@ -33,8 +33,6 @@
 #include <vlib/vlib.h>
 #include <vlib/unix/unix.h>
 
-#include <vnet/ip/ip.h>
-
 #include <vnet/ethernet/ethernet.h>
 #include <vnet/devices/devices.h>
 #include <vnet/feature/feature.h>
@@ -170,9 +168,9 @@ vhost_user_rx_thread_placement (vhost_user_intf_t * vui, u32 qid)
   vnet_hw_interface_set_input_node (vnm, vui->hw_if_index,
 				    vhost_user_input_node.index);
   vnet_hw_interface_assign_rx_thread (vnm, vui->hw_if_index, q, ~0);
-  if (txvq->mode == VNET_HW_INTERFACE_RX_MODE_UNKNOWN)
+  if (txvq->mode == VNET_HW_IF_RX_MODE_UNKNOWN)
     /* Set polling as the default */
-    txvq->mode = VNET_HW_INTERFACE_RX_MODE_POLLING;
+    txvq->mode = VNET_HW_IF_RX_MODE_POLLING;
   txvq->qid = q;
   rv = vnet_hw_interface_set_rx_mode (vnm, vui->hw_if_index, q, txvq->mode);
   if (rv)
@@ -453,21 +451,21 @@ vhost_user_socket_read (clib_file_t * uf)
     {
     case VHOST_USER_GET_FEATURES:
       msg.flags |= 4;
-      msg.u64 = (1ULL << FEAT_VIRTIO_NET_F_MRG_RXBUF) |
-	(1ULL << FEAT_VIRTIO_NET_F_CTRL_VQ) |
-	(1ULL << FEAT_VIRTIO_F_ANY_LAYOUT) |
-	(1ULL << FEAT_VIRTIO_F_INDIRECT_DESC) |
-	(1ULL << FEAT_VHOST_F_LOG_ALL) |
-	(1ULL << FEAT_VIRTIO_NET_F_GUEST_ANNOUNCE) |
-	(1ULL << FEAT_VIRTIO_NET_F_MQ) |
-	(1ULL << FEAT_VHOST_USER_F_PROTOCOL_FEATURES) |
-	(1ULL << FEAT_VIRTIO_F_VERSION_1);
+      msg.u64 = VIRTIO_FEATURE (VIRTIO_NET_F_MRG_RXBUF) |
+	VIRTIO_FEATURE (VIRTIO_NET_F_CTRL_VQ) |
+	VIRTIO_FEATURE (VIRTIO_F_ANY_LAYOUT) |
+	VIRTIO_FEATURE (VIRTIO_RING_F_INDIRECT_DESC) |
+	VIRTIO_FEATURE (VHOST_F_LOG_ALL) |
+	VIRTIO_FEATURE (VIRTIO_NET_F_GUEST_ANNOUNCE) |
+	VIRTIO_FEATURE (VIRTIO_NET_F_MQ) |
+	VIRTIO_FEATURE (VHOST_USER_F_PROTOCOL_FEATURES) |
+	VIRTIO_FEATURE (VIRTIO_F_VERSION_1);
       msg.u64 &= vui->feature_mask;
 
       if (vui->enable_gso)
 	msg.u64 |= FEATURE_VIRTIO_NET_F_HOST_GUEST_TSO_FEATURE_BITS;
       if (vui->enable_packed)
-	msg.u64 |= (1ULL << FEAT_VIRTIO_F_RING_PACKED);
+	msg.u64 |= VIRTIO_FEATURE (VIRTIO_F_RING_PACKED);
 
       msg.size = sizeof (msg.u64);
       vu_log_debug (vui, "if %d msg VHOST_USER_GET_FEATURES - reply "
@@ -488,14 +486,14 @@ vhost_user_socket_read (clib_file_t * uf)
       vui->features = msg.u64;
 
       if (vui->features &
-	  ((1 << FEAT_VIRTIO_NET_F_MRG_RXBUF) |
-	   (1ULL << FEAT_VIRTIO_F_VERSION_1)))
+	  (VIRTIO_FEATURE (VIRTIO_NET_F_MRG_RXBUF) |
+	   VIRTIO_FEATURE (VIRTIO_F_VERSION_1)))
 	vui->virtio_net_hdr_sz = 12;
       else
 	vui->virtio_net_hdr_sz = 10;
 
       vui->is_any_layout =
-	(vui->features & (1 << FEAT_VIRTIO_F_ANY_LAYOUT)) ? 1 : 0;
+	(vui->features & VIRTIO_FEATURE (VIRTIO_F_ANY_LAYOUT)) ? 1 : 0;
 
       ASSERT (vui->virtio_net_hdr_sz < VLIB_BUFFER_PRE_DATA_SIZE);
       vnet_hw_interface_t *hw = vnet_get_hw_interface (vnm, vui->hw_if_index);
@@ -649,7 +647,7 @@ vhost_user_socket_read (clib_file_t * uf)
 
       /* Spec says: If VHOST_USER_F_PROTOCOL_FEATURES has not been negotiated,
          the ring is initialized in an enabled state. */
-      if (!(vui->features & (1 << FEAT_VHOST_USER_F_PROTOCOL_FEATURES)))
+      if (!(vui->features & VIRTIO_FEATURE (VHOST_USER_F_PROTOCOL_FEATURES)))
 	vui->vrings[msg.state.index].enabled = 1;
 
       vui->vrings[msg.state.index].last_used_idx =
@@ -807,7 +805,7 @@ vhost_user_socket_read (clib_file_t * uf)
 
 	  if (vui->vrings[msg.state.index].avail_wrap_counter == 1)
 	    vui->vrings[msg.state.index].avail_wrap_counter =
-	      VIRTQ_DESC_F_AVAIL;
+	      VRING_DESC_F_AVAIL;
 	}
       vlib_worker_thread_barrier_release (vm);
       break;
@@ -1358,8 +1356,8 @@ vhost_user_delete_if (vnet_main_t * vnm, vlib_main_t * vm, u32 sw_if_index)
       if (txvq->qid == -1)
 	continue;
       if ((vum->ifq_count > 0) &&
-	  ((txvq->mode == VNET_HW_INTERFACE_RX_MODE_INTERRUPT) ||
-	   (txvq->mode == VNET_HW_INTERFACE_RX_MODE_ADAPTIVE)))
+	  ((txvq->mode == VNET_HW_IF_RX_MODE_INTERRUPT) ||
+	   (txvq->mode == VNET_HW_IF_RX_MODE_ADAPTIVE)))
 	{
 	  vum->ifq_count--;
 	  // Stop the timer if there is no more interrupt interface/queue
@@ -1710,7 +1708,7 @@ vhost_user_connect_command_fn (vlib_main_t * vm,
   /* GSO feature is disable by default */
   feature_mask &= ~FEATURE_VIRTIO_NET_F_HOST_GUEST_TSO_FEATURE_BITS;
   /* packed-ring feature is disable by default */
-  feature_mask &= ~(1ULL << FEAT_VIRTIO_F_RING_PACKED);
+  feature_mask &= ~VIRTIO_FEATURE (VIRTIO_F_RING_PACKED);
   while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
     {
       if (unformat (line_input, "socket %s", &sock_filename))
@@ -1924,7 +1922,7 @@ vhost_user_show_desc (vlib_main_t * vm, vhost_user_intf_t * vui, int q,
 	  vlib_cli_output (vm, "%U", format_vhost_user_desc,
 			   "  %-5d 0x%016lx %-5d 0x%04x %-5d 0x%016lx\n", vui,
 			   desc_table, j, &mem_hint);
-	  if (show_verbose && (desc_table[j].flags & VIRTQ_DESC_F_INDIRECT))
+	  if (show_verbose && (desc_table[j].flags & VRING_DESC_F_INDIRECT))
 	    {
 	      n_entries = desc_table[j].len / sizeof (vring_desc_t);
 	      desc_table = map_guest_mem (vui, desc_table[j].addr, &mem_hint);
@@ -2012,7 +2010,7 @@ vhost_user_show_desc_packed (vlib_main_t * vm, vhost_user_intf_t * vui, int q,
 	  vlib_cli_output (vm, "%U", format_vhost_user_packed_desc,
 			   "  %-5u 0x%016lx %-5u 0x%04x %-5u 0x%016lx\n", vui,
 			   desc_table, j, &mem_hint);
-	  if (show_verbose && (desc_table[j].flags & VIRTQ_DESC_F_INDIRECT))
+	  if (show_verbose && (desc_table[j].flags & VRING_DESC_F_INDIRECT))
 	    {
 	      n_entries = desc_table[j].len >> 4;
 	      desc_table = map_guest_mem (vui, desc_table[j].addr, &mem_hint);
@@ -2059,7 +2057,7 @@ show_vhost_user_command_fn (vlib_main_t * vm,
 
   static struct feat_struct feat_array[] = {
 #define _(s,b) { .str = #s, .bit = b, },
-    foreach_virtio_net_feature
+    foreach_virtio_net_features
 #undef _
     {.str = NULL}
   };
@@ -2164,7 +2162,7 @@ show_vhost_user_command_fn (vlib_main_t * vm,
 	{
 	  vnet_main_t *vnm = vnet_get_main ();
 	  uword thread_index;
-	  vnet_hw_interface_rx_mode mode;
+	  vnet_hw_if_rx_mode mode;
 	  vhost_user_vring_t *txvq = &vui->vrings[qid];
 
 	  if (txvq->qid == -1)
@@ -2176,7 +2174,7 @@ show_vhost_user_command_fn (vlib_main_t * vm,
 					 &mode);
 	  vlib_cli_output (vm, "   thread %d on vring %d, %U\n",
 			   thread_index, qid,
-			   format_vnet_hw_interface_rx_mode, mode);
+			   format_vnet_hw_if_rx_mode, mode);
 	}
 
       vlib_cli_output (vm, " tx placement: %s\n",

@@ -204,7 +204,8 @@ ethernet_input_inline_dmac_check (vnet_hw_interface_t * hi,
 // vlan table lookups and vlan header parsing. Check the most specific
 // matches first.
 static_always_inline void
-identify_subint (vnet_hw_interface_t * hi,
+identify_subint (ethernet_main_t * em,
+		 vnet_hw_interface_t * hi,
 		 vlib_buffer_t * b0,
 		 u32 match_flags,
 		 main_intf_t * main_intf,
@@ -213,6 +214,7 @@ identify_subint (vnet_hw_interface_t * hi,
 		 u32 * new_sw_if_index, u8 * error0, u32 * is_l2)
 {
   u32 matched;
+  ethernet_interface_t *ei = ethernet_get_interface (em, hi->hw_if_index);
 
   matched = eth_identify_subint (hi, match_flags, main_intf, vlan_intf,
 				 qinq_intf, new_sw_if_index, error0, is_l2);
@@ -220,9 +222,10 @@ identify_subint (vnet_hw_interface_t * hi,
   if (matched)
     {
       // Perform L3 my-mac filter
-      // A unicast packet arriving on an L3 interface must have a dmac matching the interface mac.
-      // This is required for promiscuous mode, else we will forward packets we aren't supposed to.
-      if (!(*is_l2))
+      // A unicast packet arriving on an L3 interface must have a dmac
+      // matching the interface mac. If interface has STATUS_L3 bit set
+      // mac filter is already done.
+      if (!(*is_l2 || (ei->flags & ETHERNET_INTERFACE_FLAG_STATUS_L3)))
 	{
 	  u64 dmacs[2];
 	  u8 dmacs_bad[2];
@@ -241,7 +244,6 @@ identify_subint (vnet_hw_interface_t * hi,
 	    ethernet_input_inline_dmac_check (hi, dmacs, dmacs_bad,
 					      1 /* n_packets */ , ei0,
 					      0 /* have_sec_dmac */ );
-
 	  if (dmacs_bad[0])
 	    *error0 = ETHERNET_ERROR_L3_MAC_MISMATCH;
 	}
@@ -1085,29 +1087,35 @@ eth_input_single_int (vlib_main_t * vm, vlib_node_runtime_t * node,
   subint_config_t *subint0 = &intf0->untagged_subint;
 
   int main_is_l3 = (subint0->flags & SUBINT_CONFIG_L2) == 0;
-  int promisc = (ei->flags & ETHERNET_INTERFACE_FLAG_ACCEPT_ALL) != 0;
+  int int_is_l3 = ei->flags & ETHERNET_INTERFACE_FLAG_STATUS_L3;
 
   if (main_is_l3)
     {
-      /* main interface is L3, we dont expect tagged packets and interface
-         is not in promisc node, so we dont't need to check DMAC */
-      int is_l3 = 1;
-
-      if (promisc == 0)
-	eth_input_process_frame (vm, node, hi, from, n_pkts, is_l3,
-				 ip4_cksum_ok, 0);
+      if (int_is_l3 ||		/* DMAC filter already done by NIC */
+	  ((hi->l2_if_count != 0) && (hi->l3_if_count == 0)))
+	{			/* All L2 usage - DMAC check not needed */
+	  eth_input_process_frame (vm, node, hi, from, n_pkts,
+				   /*is_l3 */ 1, ip4_cksum_ok, 0);
+	}
       else
-	/* subinterfaces and promisc mode so DMAC check is needed */
-	eth_input_process_frame (vm, node, hi, from, n_pkts, is_l3,
-				 ip4_cksum_ok, 1);
+	{			/* DMAC check needed for L3 */
+	  eth_input_process_frame (vm, node, hi, from, n_pkts,
+				   /*is_l3 */ 1, ip4_cksum_ok, 1);
+	}
       return;
     }
   else
     {
-      /* untagged packets are treated as L2 */
-      int is_l3 = 0;
-      eth_input_process_frame (vm, node, hi, from, n_pkts, is_l3,
-			       ip4_cksum_ok, 1);
+      if (hi->l3_if_count == 0)
+	{			/* All L2 usage - DMAC check not needed */
+	  eth_input_process_frame (vm, node, hi, from, n_pkts,
+				   /*is_l3 */ 0, ip4_cksum_ok, 0);
+	}
+      else
+	{			/* DMAC check needed for L3 */
+	  eth_input_process_frame (vm, node, hi, from, n_pkts,
+				   /*is_l3 */ 0, ip4_cksum_ok, 1);
+	}
       return;
     }
 }
@@ -1325,6 +1333,9 @@ ethernet_input_inline (vlib_main_t * vm,
 		}
 	      else
 		{
+		  if (ei->flags & ETHERNET_INTERFACE_FLAG_STATUS_L3)
+		    goto skip_dmac_check01;
+
 		  dmacs[0] = *(u64 *) e0;
 		  dmacs[1] = *(u64 *) e1;
 
@@ -1346,6 +1357,7 @@ ethernet_input_inline (vlib_main_t * vm,
 		  if (dmacs_bad[1])
 		    error1 = ETHERNET_ERROR_L3_MAC_MISMATCH;
 
+		skip_dmac_check01:
 		  vlib_buffer_advance (b0, sizeof (ethernet_header_t));
 		  determine_next_node (em, variant, 0, type0, b0,
 				       &error0, &next0);
@@ -1389,14 +1401,16 @@ ethernet_input_inline (vlib_main_t * vm,
 				  &hi1,
 				  &main_intf1, &vlan_intf1, &qinq_intf1);
 
-	  identify_subint (hi0,
+	  identify_subint (em,
+			   hi0,
 			   b0,
 			   match_flags0,
 			   main_intf0,
 			   vlan_intf0,
 			   qinq_intf0, &new_sw_if_index0, &error0, &is_l20);
 
-	  identify_subint (hi1,
+	  identify_subint (em,
+			   hi1,
 			   b1,
 			   match_flags1,
 			   main_intf1,
@@ -1563,6 +1577,9 @@ ethernet_input_inline (vlib_main_t * vm,
 		}
 	      else
 		{
+		  if (ei->flags & ETHERNET_INTERFACE_FLAG_STATUS_L3)
+		    goto skip_dmac_check0;
+
 		  dmacs[0] = *(u64 *) e0;
 
 		  if (ei && vec_len (ei->secondary_addrs))
@@ -1581,6 +1598,7 @@ ethernet_input_inline (vlib_main_t * vm,
 		  if (dmacs_bad[0])
 		    error0 = ETHERNET_ERROR_L3_MAC_MISMATCH;
 
+		skip_dmac_check0:
 		  vlib_buffer_advance (b0, sizeof (ethernet_header_t));
 		  determine_next_node (em, variant, 0, type0, b0,
 				       &error0, &next0);
@@ -1605,7 +1623,8 @@ ethernet_input_inline (vlib_main_t * vm,
 				  &hi0,
 				  &main_intf0, &vlan_intf0, &qinq_intf0);
 
-	  identify_subint (hi0,
+	  identify_subint (em,
+			   hi0,
 			   b0,
 			   match_flags0,
 			   main_intf0,
@@ -1928,14 +1947,14 @@ static clib_error_t *
 ethernet_sw_interface_up_down (vnet_main_t * vnm, u32 sw_if_index, u32 flags)
 {
   subint_config_t *subint;
-  u32 dummy_flags;
-  u32 dummy_unsup;
+  u32 placeholder_flags;
+  u32 placeholder_unsup;
   clib_error_t *error = 0;
 
   // Find the config for this subinterface
   subint =
-    ethernet_sw_interface_get_config (vnm, sw_if_index, &dummy_flags,
-				      &dummy_unsup);
+    ethernet_sw_interface_get_config (vnm, sw_if_index, &placeholder_flags,
+				      &placeholder_unsup);
 
   if (subint == 0)
     {
@@ -1959,8 +1978,8 @@ void
 ethernet_sw_interface_set_l2_mode (vnet_main_t * vnm, u32 sw_if_index, u32 l2)
 {
   subint_config_t *subint;
-  u32 dummy_flags;
-  u32 dummy_unsup;
+  u32 placeholder_flags;
+  u32 placeholder_unsup;
   int is_port;
   vnet_sw_interface_t *sw = vnet_get_sw_interface (vnm, sw_if_index);
 
@@ -1968,8 +1987,8 @@ ethernet_sw_interface_set_l2_mode (vnet_main_t * vnm, u32 sw_if_index, u32 l2)
 
   // Find the config for this subinterface
   subint =
-    ethernet_sw_interface_get_config (vnm, sw_if_index, &dummy_flags,
-				      &dummy_unsup);
+    ethernet_sw_interface_get_config (vnm, sw_if_index, &placeholder_flags,
+				      &placeholder_unsup);
 
   if (subint == 0)
     {
@@ -2009,13 +2028,13 @@ ethernet_sw_interface_set_l2_mode_noport (vnet_main_t * vnm,
 					  u32 sw_if_index, u32 l2)
 {
   subint_config_t *subint;
-  u32 dummy_flags;
-  u32 dummy_unsup;
+  u32 placeholder_flags;
+  u32 placeholder_unsup;
 
   /* Find the config for this subinterface */
   subint =
-    ethernet_sw_interface_get_config (vnm, sw_if_index, &dummy_flags,
-				      &dummy_unsup);
+    ethernet_sw_interface_get_config (vnm, sw_if_index, &placeholder_flags,
+				      &placeholder_unsup);
 
   if (subint == 0)
     {

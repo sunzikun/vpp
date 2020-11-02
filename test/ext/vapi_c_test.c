@@ -414,8 +414,8 @@ START_TEST (test_show_version_1)
   size_t size;
   rv = vapi_recv (ctx, (void *) &resp, &size, 0, 0);
   ck_assert_int_eq (VAPI_OK, rv);
-  int dummy;
-  show_version_cb (NULL, &dummy, VAPI_OK, true, &resp->payload);
+  int placeholder;
+  show_version_cb (NULL, &placeholder, VAPI_OK, true, &resp->payload);
   vapi_msg_free (ctx, resp);
 }
 
@@ -526,9 +526,6 @@ START_TEST (test_loopbacks_1)
       dctx.last_called = false;
       clib_memset (&seen, 0, sizeof (seen));
       dump = vapi_alloc_sw_interface_dump (ctx);
-      dump->payload.name_filter_valid = 0;
-      clib_memset (dump->payload.name_filter.buf, 0,
-		   dump->payload.name_filter.length);
       while (VAPI_EAGAIN ==
 	     (rv =
 	      vapi_sw_interface_dump (ctx, dump, sw_interface_dump_cb,
@@ -558,9 +555,6 @@ START_TEST (test_loopbacks_1)
   dctx.last_called = false;
   clib_memset (&seen, 0, sizeof (seen));
   dump = vapi_alloc_sw_interface_dump (ctx);
-  dump->payload.name_filter_valid = 0;
-  clib_memset (dump->payload.name_filter.buf, 0,
-	       dump->payload.name_filter.length);
   while (VAPI_EAGAIN ==
 	 (rv =
 	  vapi_sw_interface_dump (ctx, dump, sw_interface_dump_cb, &dctx)))
@@ -683,9 +677,6 @@ START_TEST (test_loopbacks_2)
   clib_memset (&seen, 0, sizeof (seen));
   sw_interface_dump_ctx dctx = { false, num_ifs, sw_if_indexes, seen, 0 };
   vapi_msg_sw_interface_dump *dump = vapi_alloc_sw_interface_dump (ctx);
-  dump->payload.name_filter_valid = 0;
-  clib_memset (dump->payload.name_filter.buf, 0,
-	       dump->payload.name_filter.length);
   while (VAPI_EAGAIN ==
 	 (rv =
 	  vapi_sw_interface_dump (ctx, dump, sw_interface_dump_cb, &dctx)))
@@ -724,9 +715,6 @@ START_TEST (test_loopbacks_2)
   clib_memset (&seen, 0, sizeof (seen));
   dctx.last_called = false;
   dump = vapi_alloc_sw_interface_dump (ctx);
-  dump->payload.name_filter_valid = 0;
-  clib_memset (dump->payload.name_filter.buf, 0,
-	       dump->payload.name_filter.length);
   while (VAPI_EAGAIN ==
 	 (rv =
 	  vapi_sw_interface_dump (ctx, dump, sw_interface_dump_cb, &dctx)))

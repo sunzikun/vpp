@@ -19,7 +19,7 @@ PLATFORM?=vpp
 SAMPLE_PLUGIN?=no
 STARTUP_DIR?=$(PWD)
 MACHINE=$(shell uname -m)
-SUDO?=sudo
+SUDO?=sudo -E
 DPDK_CONFIG?=no-pci
 
 ,:=,
@@ -55,14 +55,14 @@ endif
 
 ifeq ($(filter ubuntu debian,$(OS_ID)),$(OS_ID))
 PKG=deb
-else ifeq ($(filter rhel centos fedora opensuse opensuse-leap opensuse-tumbleweed,$(OS_ID)),$(OS_ID))
+else ifeq ($(filter rhel centos fedora,$(OS_ID)),$(OS_ID))
 PKG=rpm
 endif
 
 # +libganglia1-dev if building the gmond plugin
 
 DEB_DEPENDS  = curl build-essential autoconf automake ccache
-DEB_DEPENDS += debhelper dkms git libtool libapr1-dev dh-systemd
+DEB_DEPENDS += debhelper dkms git libtool libapr1-dev dh-systemd dh-python
 DEB_DEPENDS += libconfuse-dev git-review exuberant-ctags cscope pkg-config
 DEB_DEPENDS += lcov chrpath autoconf indent clang-format libnuma-dev
 DEB_DEPENDS += python3-all python3-setuptools check
@@ -72,7 +72,7 @@ DEB_DEPENDS += python3-venv  # ensurepip
 DEB_DEPENDS += python3-dev   # needed for python3 -m pip install psutil
 # python3.6 on 16.04 requires python36-dev
 
-LIBFFI=libffi6 # works on all but 20.04
+LIBFFI=libffi6 # works on all but 20.04 and debian-testing
 
 ifeq ($(OS_VERSION_ID),18.04)
 	DEB_DEPENDS += python-dev python-all python-pip python-virtualenv
@@ -80,17 +80,20 @@ ifeq ($(OS_VERSION_ID),18.04)
 	DEB_DEPENDS += clang-9
 else ifeq ($(OS_VERSION_ID),20.04)
 	DEB_DEPENDS += python3-virtualenv
-	LIBFFI=libffi7
-else ifeq ($(OS_ID)-$(OS_VERSION_ID),debian-8)
 	DEB_DEPENDS += libssl-dev
-	DEB_DEPENDS += python-dev python-all python-pip python-virtualenv
-	APT_ARGS = -t jessie-backports
+	DEB_DEPENDS += libelf-dev # for libbpf (af_xdp)
+	LIBFFI=libffi7
 else ifeq ($(OS_ID)-$(OS_VERSION_ID),debian-9)
 	DEB_DEPENDS += libssl1.0-dev
 	DEB_DEPENDS += python-all python-pip
 	DEB_DEPENDS += python-dev python-all python-pip python-virtualenv
+else ifeq ($(OS_ID)-$(OS_VERSION_ID),debian-10)
+	DEB_DEPENDS += libssl-dev
+	DEB_DEPENDS += libelf-dev # for libbpf (af_xdp)
 else
 	DEB_DEPENDS += libssl-dev
+	DEB_DEPENDS += libelf-dev # for libbpf (af_xdp)
+	LIBFFI=libffi7
 endif
 
 DEB_DEPENDS += $(LIBFFI)
@@ -104,6 +107,9 @@ RPM_DEPENDS += selinux-policy selinux-policy-devel
 RPM_DEPENDS += ninja-build
 RPM_DEPENDS += libuuid-devel
 RPM_DEPENDS += mbedtls-devel
+RPM_DEPENDS += ccache
+RPM_DEPENDS += xmlto
+RPM_DEPENDS += elfutils-libelf-devel
 
 ifeq ($(OS_ID),fedora)
 	RPM_DEPENDS += dnf-utils
@@ -117,7 +123,7 @@ ifeq ($(OS_ID),fedora)
 else ifeq ($(OS_ID)-$(OS_VERSION_ID),centos-8)
 	RPM_DEPENDS += yum-utils
 	RPM_DEPENDS += compat-openssl10
-	RPM_DEPENDS += python36-devel python3-ply
+	RPM_DEPENDS += python2-devel python36-devel python3-ply
 	RPM_DEPENDS += python3-virtualenv python3-jsonschema
 	RPM_DEPENDS += cmake
 	RPM_DEPENDS_GROUPS = 'Development Tools'
@@ -127,7 +133,7 @@ else
 	RPM_DEPENDS += python36-ply  # for vppapigen
 	RPM_DEPENDS += python3-devel python3-pip
 	RPM_DEPENDS += python-virtualenv python36-jsonschema
-	RPM_DEPENDS += devtoolset-9
+	RPM_DEPENDS += devtoolset-9 devtoolset-9-libasan-devel
 	RPM_DEPENDS += cmake3
 	RPM_DEPENDS_GROUPS = 'Development Tools'
 endif
@@ -135,42 +141,11 @@ endif
 # +ganglia-devel if building the ganglia plugin
 
 RPM_DEPENDS += chrpath libffi-devel rpm-build
-# lowercase- replace spaces with dashes.
-SUSE_NAME= $(shell grep '^NAME=' /etc/os-release | cut -f2- -d= | sed -e 's/\"//g' | sed -e 's/ /-/' | awk '{print tolower($$0)}')
-SUSE_ID= $(shell grep '^VERSION_ID=' /etc/os-release | cut -f2- -d= | sed -e 's/\"//g' | cut -d' ' -f2)
-RPM_SUSE_BUILDTOOLS_DEPS = autoconf automake ccache check-devel chrpath
-RPM_SUSE_BUILDTOOLS_DEPS += clang cmake indent libtool make ninja python3-ply
 
-RPM_SUSE_DEVEL_DEPS = glibc-devel-static libnuma-devel
-RPM_SUSE_DEVEL_DEPS += libopenssl-devel openssl-devel mbedtls-devel libuuid-devel
-
-RPM_SUSE_PYTHON_DEPS = python-devel python3-devel python-pip python3-pip
-RPM_SUSE_PYTHON_DEPS += python-rpm-macros python3-rpm-macros
-
-RPM_SUSE_PLATFORM_DEPS = distribution-release shadow rpm-build
-
-ifeq ($(OS_ID),opensuse)
-ifeq ($(SUSE_NAME),tumbleweed)
-	RPM_SUSE_DEVEL_DEPS = libboost_headers1_68_0-devel-1.68.0  libboost_thread1_68_0-devel-1.68.0 gcc
-	RPM_SUSE_PYTHON_DEPS += python3-ply python2-virtualenv
-endif
-ifeq ($(SUSE_ID),15.0)
-	RPM_SUSE_DEVEL_DEPS += libboost_headers-devel libboost_thread-devel gcc
-	RPM_SUSE_PYTHON_DEPS += python3-ply python2-virtualenv
-else
-	RPM_SUSE_DEVEL_DEPS += libboost_headers1_68_0-devel-1.68.0 gcc6
-	RPM_SUSE_PYTHON_DEPS += python-virtualenv
-endif
-endif
-
-ifeq ($(OS_ID),opensuse-leap)
-ifeq ($(SUSE_ID),15.0)
-	RPM_SUSE_DEVEL_DEPS += libboost_headers-devel libboost_thread-devel gcc git curl
-	RPM_SUSE_PYTHON_DEPS += python3-ply python2-virtualenv
-endif
-endif
-
-RPM_SUSE_DEPENDS += $(RPM_SUSE_BUILDTOOLS_DEPS) $(RPM_SUSE_DEVEL_DEPS) $(RPM_SUSE_PYTHON_DEPS) $(RPM_SUSE_PLATFORM_DEPS)
+RPM_DEPENDS_DEBUG  = glibc-debuginfo e2fsprogs-debuginfo
+RPM_DEPENDS_DEBUG += krb5-debuginfo openssl-debuginfo
+RPM_DEPENDS_DEBUG += zlib-debuginfo nss-softokn-debuginfo
+RPM_DEPENDS_DEBUG += yum-plugin-auto-update-debug-info
 
 ifneq ($(wildcard $(STARTUP_DIR)/startup.conf),)
         STARTUP_CONF ?= $(STARTUP_DIR)/startup.conf
@@ -216,8 +191,6 @@ help:
 	@echo " pkg-deb-debug        - build DEB debug packages"
 	@echo " pkg-snap             - build SNAP package"
 	@echo " snap-clean           - clean up snap build environment"
-	@echo " vom-pkg-deb          - build vom DEB packages"
-	@echo " vom-pkg-deb-debug    - build vom DEB debug packages"
 	@echo " pkg-rpm              - build RPM packages"
 	@echo " install-ext-dep[s]   - install external development dependencies"
 	@echo " ctags                - (re)generate ctags database"
@@ -282,7 +255,7 @@ ifeq ($(filter ubuntu debian,$(OS_ID)),$(OS_ID))
 	exit 0
 else ifneq ("$(wildcard /etc/redhat-release)","")
 	@for i in $(RPM_DEPENDS) ; do \
-	    RPM=$$(basename -s .rpm "$${i##*/}" | cut -d- -f1,2,3)  ;	\
+	    RPM=$$(basename -s .rpm "$${i##*/}" | cut -d- -f1,2,3,4)  ;	\
 	    MISSING+=$$(rpm -q $$RPM | grep "^package")	   ;    \
 	done							   ;	\
 	if [ -n "$$MISSING" ] ; then \
@@ -301,13 +274,6 @@ bootstrap:
 .PHONY: install-dep
 install-dep:
 ifeq ($(filter ubuntu debian,$(OS_ID)),$(OS_ID))
-ifeq ($(OS_VERSION_ID),14.04)
-	@sudo -E apt-get $(CONFIRM) $(FORCE) install software-properties-common
-endif
-ifeq ($(OS_ID)-$(OS_VERSION_ID),debian-8)
-	@grep -q jessie-backports /etc/apt/sources.list /etc/apt/sources.list.d/* 2> /dev/null \
-           || ( echo "Please install jessie-backports" ; exit 1 )
-endif
 	@sudo -E apt-get update
 	@sudo -E apt-get $(APT_ARGS) $(CONFIRM) $(FORCE) install $(DEB_DEPENDS)
 else ifneq ("$(wildcard /etc/redhat-release)","")
@@ -317,29 +283,22 @@ ifeq ($(OS_ID),rhel)
 	@sudo -E yum install $(CONFIRM) $(RPM_DEPENDS)
 	@sudo -E debuginfo-install $(CONFIRM) glibc openssl-libs mbedtls-devel zlib
 else ifeq ($(OS_ID)-$(OS_VERSION_ID),centos-8)
+	@sudo -E dnf install $(CONFIRM) dnf-plugins-core epel-release
+	@sudo -E dnf config-manager --set-enabled PowerTools
 	@sudo -E dnf groupinstall $(CONFIRM) $(RPM_DEPENDS_GROUPS)
 	@sudo -E dnf install $(CONFIRM) $(RPM_DEPENDS)
 else ifeq ($(OS_ID),centos)
 	@sudo -E yum install $(CONFIRM) centos-release-scl-rh epel-release
 	@sudo -E yum groupinstall $(CONFIRM) $(RPM_DEPENDS_GROUPS)
 	@sudo -E yum install $(CONFIRM) $(RPM_DEPENDS)
-	@sudo -E debuginfo-install $(CONFIRM) glibc openssl-libs mbedtls-devel zlib
+	@sudo -E yum install $(CONFIRM) --enablerepo=base-debuginfo $(RPM_DEPENDS_DEBUG)
 else ifeq ($(OS_ID),fedora)
 	@sudo -E dnf groupinstall $(CONFIRM) $(RPM_DEPENDS_GROUPS)
 	@sudo -E dnf install $(CONFIRM) $(RPM_DEPENDS)
 	@sudo -E debuginfo-install $(CONFIRM) glibc openssl-libs mbedtls-devel zlib
 endif
-else ifeq ($(filter opensuse-tumbleweed,$(OS_ID)),$(OS_ID))
-	@sudo -E zypper refresh
-	@sudo -E zypper install -y $(RPM_SUSE_DEPENDS)
-else ifeq ($(filter opensuse-leap,$(OS_ID)),$(OS_ID))
-	@sudo -E zypper refresh
-	@sudo -E zypper install  -y $(RPM_SUSE_DEPENDS)
-else ifeq ($(filter opensuse,$(OS_ID)),$(OS_ID))
-	@sudo -E zypper refresh
-	@sudo -E zypper install -y $(RPM_SUSE_DEPENDS)
 else
-	$(error "This option currently works only on Ubuntu, Debian, RHEL, CentOS or openSUSE systems")
+	$(error "This option currently works only on Ubuntu, Debian, RHEL, or CentOS systems")
 endif
 	git config commit.template .git_commit_template.txt
 
@@ -446,13 +405,11 @@ test-gcov:
 
 .PHONY: test-all
 test-all:
-	$(if $(filter-out $(3),retest),make -C $(BR) PLATFORM=vpp TAG=vpp vom-install,)
 	$(eval EXTENDED_TESTS=yes)
 	$(call test,vpp,vpp,test)
 
 .PHONY: test-all-debug
 test-all-debug:
-	$(if $(filter-out $(3),retest),make -C $(BR) PLATFORM=vpp TAG=vpp_debug vom-install,)
 	$(eval EXTENDED_TESTS=yes)
 	$(call test,vpp,vpp_debug,test)
 
@@ -498,7 +455,6 @@ test-wipe-doc:
 
 .PHONY: test-cov
 test-cov:
-	@make -C $(BR) PLATFORM=vpp TAG=vpp_gcov vom-install
 	$(eval EXTENDED_TESTS=yes)
 	$(call test,vpp,vpp_gcov,cov)
 
@@ -603,17 +559,9 @@ snap-clean:
         snapcraft clean ;			\
 	rm -f *.snap *.tgz
 
-.PHONY: vom-pkg-deb
-vom-pkg-deb: pkg-deb
-	$(call make,$(PLATFORM),vom-package-deb)
-
 .PHONY: pkg-deb-debug
 pkg-deb-debug:
 	$(call make,$(PLATFORM)_debug,vpp-package-deb)
-
-.PHONY: vom-pkg-deb-debug
-vom-pkg-deb-debug: pkg-deb-debug
-	$(call make,$(PLATFORM)_debug,vom-package-deb)
 
 .PHONY: pkg-rpm
 pkg-rpm: dist
@@ -658,7 +606,9 @@ cscope: cscope.files
 
 .PHONY: compdb
 compdb:
-	@ninja -C build-root/build-vpp_debug-native/vpp -t compdb > compile_commands.json
+	@ninja -C build-root/build-vpp_debug-native/vpp build.ninja
+	@ninja -C build-root/build-vpp_debug-native/vpp -t compdb | \
+	  extras/scripts/compdb_cleanup.py > compile_commands.json
 
 .PHONY: checkstyle
 checkstyle: checkfeaturelist
@@ -751,14 +701,8 @@ pkg-verify: install-dep $(BR)/.deps.ok install-ext-deps
 	@make -C build-root PLATFORM=vpp TAG=vpp sample-plugin-install
 	$(call banner,"Building libmemif")
 	@make -C build-root PLATFORM=vpp TAG=vpp libmemif-install
-	$(call banner,"Building VOM")
-	@make -C build-root PLATFORM=vpp TAG=vpp vom-install
 	$(call banner,"Building $(PKG) packages")
 	@make pkg-$(PKG)
-ifeq ($(OS_ID),ubuntu)
-	$(call banner,"Building VOM $(PKG) package")
-	@make vom-pkg-deb
-endif
 
 MAKE_VERIFY_GATE_OS ?= ubuntu-18.04
 .PHONY: verify

@@ -26,7 +26,7 @@ static_always_inline u8
 nat44_maximum_sessions_exceeded (snat_main_t * sm, u32 thread_index)
 {
   if (pool_elts (sm->per_thread_data[thread_index].sessions) >=
-      sm->max_translations)
+      sm->max_translations_per_thread)
     return 1;
   return 0;
 }
@@ -100,7 +100,7 @@ nat44_user_del (ip4_address_t * addr, u32 fib_index)
   snat_user_key_t user_key;
   clib_bihash_kv_8_8_t kv, value;
 
-  if (sm->deterministic || sm->endpoint_dependent)
+  if (sm->endpoint_dependent)
     return rv;
 
   user_key.addr.as_u32 = addr->as_u32;

@@ -24,7 +24,6 @@
 
 #include <vnet/ip/ip.h>
 #include <vlib/vlib.h>
-#include <vnet/pg/pg.h>
 #include <vnet/udp/udp.h>
 #include <vnet/tcp/tcp.h>
 #include <vnet/ip/punt.h>
@@ -424,8 +423,9 @@ vnet_punt_add_del (vlib_main_t * vm, const punt_reg_t * pr, bool is_add)
 
 static clib_error_t *
 punt_cli (vlib_main_t * vm,
-	  unformat_input_t * input, vlib_cli_command_t * cmd)
+	  unformat_input_t * input__, vlib_cli_command_t * cmd)
 {
+  unformat_input_t line_input, *input = &line_input;
   clib_error_t *error = NULL;
   bool is_add = true;
   /* *INDENT-OFF* */
@@ -441,6 +441,9 @@ punt_cli (vlib_main_t * vm,
   };
   u32 port;
   /* *INDENT-ON* */
+
+  if (!unformat_user (input__, unformat_line_input, input))
+    return 0;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
@@ -476,6 +479,7 @@ punt_cli (vlib_main_t * vm,
     }
 
 done:
+  unformat_free (input);
   return error;
 }
 
@@ -509,8 +513,10 @@ VLIB_CLI_COMMAND (punt_command, static) = {
 
 static clib_error_t *
 punt_socket_register_cmd (vlib_main_t * vm,
-			  unformat_input_t * input, vlib_cli_command_t * cmd)
+			  unformat_input_t * input__,
+			  vlib_cli_command_t * cmd)
 {
+  unformat_input_t line_input, *input = &line_input;
   u8 *socket_name = 0;
   clib_error_t *error = NULL;
   /* *INDENT-OFF* */
@@ -525,6 +531,9 @@ punt_socket_register_cmd (vlib_main_t * vm,
     .type = PUNT_TYPE_L4,
   };
   /* *INDENT-ON* */
+
+  if (!unformat_user (input__, unformat_line_input, input))
+    return 0;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
@@ -556,6 +565,7 @@ punt_socket_register_cmd (vlib_main_t * vm,
     error = vnet_punt_socket_add (vm, 1, &pr, (char *) socket_name);
 
 done:
+  unformat_free (input);
   return error;
 }
 
@@ -577,9 +587,10 @@ VLIB_CLI_COMMAND (punt_socket_register_command, static) =
 
 static clib_error_t *
 punt_socket_deregister_cmd (vlib_main_t * vm,
-			    unformat_input_t * input,
+			    unformat_input_t * input__,
 			    vlib_cli_command_t * cmd)
 {
+  unformat_input_t line_input, *input = &line_input;
   clib_error_t *error = NULL;
   /* *INDENT-OFF* */
   punt_reg_t pr = {
@@ -593,6 +604,9 @@ punt_socket_deregister_cmd (vlib_main_t * vm,
     .type = PUNT_TYPE_L4,
   };
   /* *INDENT-ON* */
+
+  if (!unformat_user (input__, unformat_line_input, input))
+    return 0;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
@@ -618,6 +632,7 @@ punt_socket_deregister_cmd (vlib_main_t * vm,
 
   error = vnet_punt_socket_del (vm, &pr);
 done:
+  unformat_free (input);
   return error;
 }
 
@@ -723,12 +738,16 @@ punt_client_show_one (const punt_client_t * pc, void *ctx)
 
 static clib_error_t *
 punt_socket_show_cmd (vlib_main_t * vm,
-		      unformat_input_t * input, vlib_cli_command_t * cmd)
+		      unformat_input_t * input__, vlib_cli_command_t * cmd)
 {
+  unformat_input_t line_input, *input = &line_input;
   clib_error_t *error = NULL;
   punt_type_t pt;
 
   pt = PUNT_TYPE_L4;
+
+  if (!unformat_user (input__, unformat_line_input, input))
+    return 0;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
@@ -749,6 +768,7 @@ punt_socket_show_cmd (vlib_main_t * vm,
   punt_client_walk (pt, punt_client_show_one, vm);
 
 done:
+  unformat_free (input);
   return (error);
 }
 

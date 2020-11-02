@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-#include <vnet/ip/lookup.h>
 #include <vnet/dpo/load_balance.h>
 #include <vnet/dpo/load_balance_map.h>
 #include <vnet/dpo/drop_dpo.h>
@@ -23,6 +22,8 @@
 #include <vnet/fib/fib_urpf_list.h>
 #include <vnet/bier/bier_fwd.h>
 #include <vnet/fib/mpls_fib.h>
+#include <vnet/ip/ip4_inlines.h>
+#include <vnet/ip/ip6_inlines.h>
 
 /*
  * distribution error tolerance for load-balancing
@@ -93,12 +94,33 @@ static load_balance_t *
 load_balance_alloc_i (void)
 {
     load_balance_t *lb;
+    u8 need_barrier_sync = 0;
+    vlib_main_t *vm = vlib_get_main();
+    ASSERT (vm->thread_index == 0);
+
+    pool_get_aligned_will_expand (load_balance_pool, need_barrier_sync,
+                                  CLIB_CACHE_LINE_BYTES);
+    if (need_barrier_sync)
+        vlib_worker_thread_barrier_sync (vm);
 
     pool_get_aligned(load_balance_pool, lb, CLIB_CACHE_LINE_BYTES);
     clib_memset(lb, 0, sizeof(*lb));
 
     lb->lb_map = INDEX_INVALID;
     lb->lb_urpf = INDEX_INVALID;
+
+    if (need_barrier_sync == 0)
+    {
+        need_barrier_sync += vlib_validate_combined_counter_will_expand
+            (&(load_balance_main.lbm_to_counters),
+             load_balance_get_index(lb));
+        need_barrier_sync += vlib_validate_combined_counter_will_expand
+            (&(load_balance_main.lbm_via_counters),
+             load_balance_get_index(lb));
+        if (need_barrier_sync)
+            vlib_worker_thread_barrier_sync (vm);
+    }
+
     vlib_validate_combined_counter(&(load_balance_main.lbm_to_counters),
                                    load_balance_get_index(lb));
     vlib_validate_combined_counter(&(load_balance_main.lbm_via_counters),
@@ -107,6 +129,9 @@ load_balance_alloc_i (void)
                                load_balance_get_index(lb));
     vlib_zero_combined_counter(&(load_balance_main.lbm_via_counters),
                                load_balance_get_index(lb));
+
+    if (need_barrier_sync)
+        vlib_worker_thread_barrier_release (vm);
 
     return (lb);
 }
@@ -1121,7 +1146,7 @@ load_balance_inline (vlib_main_t * vm,
 	      vnet_buffer(b0)->ip.flow_hash = bier_compute_flow_hash(bh0);
 	  }
 
-	  dpo0 = load_balance_get_bucket_i(lb0, 
+	  dpo0 = load_balance_get_bucket_i(lb0,
 					   vnet_buffer(b0)->ip.flow_hash &
 					   (lb0->lb_n_buckets_minus_1));
 

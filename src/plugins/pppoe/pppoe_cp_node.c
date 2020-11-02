@@ -153,6 +153,9 @@ VLIB_NODE_FN (pppoe_cp_dispatch_node) (vlib_main_t * vm,
 
               /* set src mac address */
               si = vnet_get_sw_interface(vnm, tx_sw_if_index0);
+              if( si->type == VNET_SW_INTERFACE_TYPE_SUB ) {
+                si = vnet_get_sw_interface(vnm, si->sup_sw_if_index);
+              }
               hi = vnet_get_hw_interface (vnm, si->hw_if_index);
               clib_memcpy_fast (vlib_buffer_get_current (b0)+6, hi->hw_address, 6);
             }
@@ -236,6 +239,9 @@ VLIB_REGISTER_NODE (pppoe_cp_dispatch_node) = {
   .name = "pppoe-cp-dispatch",
   /* Takes a vector of packets. */
   .vector_size = sizeof (u32),
+
+  .n_errors = PPPOE_N_ERROR,
+  .error_strings = pppoe_error_strings,
 
   .n_next_nodes = PPPOE_CP_N_NEXT,
   .next_nodes = {

@@ -60,7 +60,6 @@ BuildRequires: python3, python36-devel, python3-virtualenv
 BuildRequires: cmake
 %else
 %if 0%{rhel} >= 7
-Requires: epel-release
 Requires: vpp-lib = %{_version}-%{_release}, vpp-selinux-policy = %{_version}-%{_release}, net-tools, pciutils, python36
 Requires: boost-filesystem mbedtls libffi-devel
 BuildRequires: epel-release
@@ -150,7 +149,7 @@ This package contains the python bindings for the vpp api
 Summary: VPP api python3 bindings
 Group: Development/Libraries
 Requires: vpp = %{_version}-%{_release}, vpp-lib = %{_version}-%{_release}, libffi-devel
-Requires: python-setuptools
+Requires: python3-setuptools
 
 %description api-python3
 This package contains the python3 bindings for the vpp api
@@ -169,7 +168,10 @@ Requires(post): python3-policycoreutils
 This package contains a tailored VPP SELinux policy
 
 %prep
-%setup -q -n %{name}-%{_version}
+%setup -q -c -T -n %{name}-%{_version}
+cd ..
+unxz --stdout ./SOURCES/%{name}-%{_version}-%{_release}.tar.xz | tar --extract --touch
+cd -
 
 %pre
 # Add the vpp group
@@ -180,7 +182,7 @@ groupadd -f -r vpp
 . /opt/rh/devtoolset-9/enable
 %endif
 %if %{with aesni}
-    make bootstrap
+    make install-dep
     make -C build-root PLATFORM=vpp TAG=%{_vpp_tag} install-packages
 %else
     make bootstrap AESNI=n
@@ -262,7 +264,7 @@ install -m 0644 $MODULES \
 #
 # devel
 #
-for dir in %{_mu_build_dir}/%{_vpp_install_dir}/{vom,vpp}/include/
+for dir in %{_mu_build_dir}/%{_vpp_install_dir}/vpp/include/
 do
 	for subdir in $(cd ${dir} && find . -type d -print)
 	do

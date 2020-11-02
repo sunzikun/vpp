@@ -60,24 +60,19 @@ typedef enum
   STATE_APP_ADDING_TLS_DATA,
   STATE_APP_FAILED,
   STATE_APP_READY
-} app_state_t;
+} vcl_bapi_app_state_t;
 
-typedef enum
+typedef enum vcl_session_state_
 {
-  STATE_CLOSED = 0,
-  STATE_CONNECT = 0x01,
-  STATE_LISTEN = 0x02,
-  STATE_ACCEPT = 0x04,
-  STATE_VPP_CLOSING = 0x08,
-  STATE_DISCONNECT = 0x10,
-  STATE_DETACHED = 0x20,
-  STATE_UPDATED = 0x40,
-  STATE_LISTEN_NO_MQ = 0x80,
+  VCL_STATE_CLOSED,
+  VCL_STATE_LISTEN,
+  VCL_STATE_READY,
+  VCL_STATE_VPP_CLOSING,
+  VCL_STATE_DISCONNECT,
+  VCL_STATE_DETACHED,
+  VCL_STATE_UPDATED,
+  VCL_STATE_LISTEN_NO_MQ,
 } vcl_session_state_t;
-
-#define SERVER_STATE_OPEN  (STATE_ACCEPT|STATE_VPP_CLOSING)
-#define CLIENT_STATE_OPEN  (STATE_CONNECT|STATE_VPP_CLOSING)
-#define STATE_OPEN (SERVER_STATE_OPEN | CLIENT_STATE_OPEN)
 
 typedef struct epoll_event vppcom_epoll_event_t;
 
@@ -136,54 +131,41 @@ typedef enum
   VCL_SESS_ATTR_MAX
 } vppcom_session_attr_t;
 
-#define VCL_SESS_ATTR_SET(ATTR, VAL)            \
-do {                                            \
-  (ATTR) |= 1 << (VAL);                         \
- } while (0)
-
-#define VCL_SESS_ATTR_CLR(ATTR, VAL)            \
-do {                                            \
-  (ATTR) &= ~(1 << (VAL));                      \
- } while (0)
-
-#define VCL_SESS_ATTR_TEST(ATTR, VAL)           \
-  ((ATTR) & (1 << (VAL)) ? 1 : 0)
-
 typedef enum vcl_session_flags_
 {
   VCL_SESSION_F_CONNECTED = 1 << 0,
+  VCL_SESSION_F_IS_VEP = 1 << 1,
+  VCL_SESSION_F_IS_VEP_SESSION = 1 << 2,
+  VCL_SESSION_F_HAS_RX_EVT = 1 << 3,
 } __clib_packed vcl_session_flags_t;
 
-typedef struct
+typedef struct vcl_session_
 {
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline0);
+
 #define _(type, name) type name;
   foreach_app_session_field
 #undef _
-  u32 sndbuf_size;		// VPP-TBD: Hack until support setsockopt(SO_SNDBUF)
-  u32 rcvbuf_size;		// VPP-TBD: Hack until support setsockopt(SO_RCVBUF)
-  u32 user_mss;			// VPP-TBD: Hack until support setsockopt(TCP_MAXSEG)
-  u64 vpp_handle;
-  u32 vpp_thread_index;
+  vcl_session_flags_t flags;	/**< see @ref vcl_session_flags_t */
+  u32 rx_bytes_pending;		/**< bytes rx-ed as segs but not yet freed */
 
   svm_fifo_t *ct_rx_fifo;
   svm_fifo_t *ct_tx_fifo;
-
-  /* Socket configuration state */
-  u8 is_vep;
-  u8 is_vep_session;
-  vcl_session_flags_t flags;
-  /* VCL session index of the listening session (if any) */
-  u32 listener_index;
-  /* Accepted sessions on this listener */
-  int n_accepted_sessions;
-  u8 has_rx_evt;
-  u32 attr;
-  u64 parent_handle;
-  vppcom_epoll_t vep;
-  int libc_epfd;
-  svm_msg_q_t *our_evt_q;
   vcl_session_msg_t *accept_evts_fifo;
+
+  u64 vpp_handle;
+  u32 vpp_thread_index;
+  u32 listener_index;		/**< index of parent listener (if any) */
+  int n_accepted_sessions;	/**< sessions accepted by this listener */
+  u32 attributes;		/**< see @ref vppcom_session_attr_t */
+  u64 parent_handle;
+  int libc_epfd;
+  vppcom_epoll_t vep;
+
+  u32 sndbuf_size;		// VPP-TBD: Hack until support setsockopt(SO_SNDBUF)
+  u32 rcvbuf_size;		// VPP-TBD: Hack until support setsockopt(SO_RCVBUF)
+  u32 user_mss;			// VPP-TBD: Hack until support setsockopt(TCP_MAXSEG)
+
 #if VCL_ELOG
   elog_track_t elog_track;
 #endif
@@ -214,10 +196,12 @@ typedef struct vppcom_cfg_t_
   f64 accept_timeout;
   u32 event_ring_size;
   char *event_log_path;
-  u8 *vpp_api_filename;
-  u8 *vpp_api_socket_name;
-  u8 *vpp_api_chroot;
+  u8 *vpp_app_socket_api;	/**< app socket api socket file name */
+  u8 *vpp_bapi_filename;	/**< bapi shm transport file name */
+  u8 *vpp_bapi_socket_name;	/**< bapi socket transport socket name */
+  u8 *vpp_bapi_chroot;
   u32 tls_engine;
+  u8 mt_wrk_supported;
 } vppcom_cfg_t;
 
 void vppcom_cfg (vppcom_cfg_t * vcl_cfg);
@@ -250,11 +234,11 @@ typedef struct vcl_worker_
   /** Worker index in vpp*/
   u32 vpp_wrk_index;
 
-  /** API client handle */
-  u32 my_client_index;
-
-  /** State of the connection, shared between msg RX thread and main thread */
-  volatile app_state_t wrk_state;
+  /**
+   * Generic api client handle. When binary api is in used, it stores
+   * the "client_index" and when socket api is use, it stores the sapi
+   * client handle */
+  u32 api_client_handle;
 
   /** VPP binary api input queue */
   svm_queue_t *vl_input_queue;
@@ -304,10 +288,22 @@ typedef struct vcl_worker_
 
   u32 forked_child;
 
+  clib_socket_t app_api_sock;
   socket_client_main_t bapi_sock_ctx;
   memory_client_main_t bapi_shm_ctx;
   api_main_t bapi_api_ctx;
+
+  /** vcl needs next epoll_create to go to libc_epoll */
+  u8 vcl_needs_real_epoll;
+  volatile int rpc_done;
 } vcl_worker_t;
+
+STATIC_ASSERT (sizeof (session_disconnected_msg_t) <= 16,
+	       "disconnected must fit in session_event_t");
+STATIC_ASSERT (sizeof (session_reset_msg_t) <= 16,
+	       "disconnected must fit in session_event_t");
+
+typedef void (vcl_rpc_fn_t) (void *args);
 
 typedef struct vppcom_main_t_
 {
@@ -320,9 +316,6 @@ typedef struct vppcom_main_t_
 
   /** App's index in vpp. It's used by vpp to identify the app */
   u32 app_index;
-
-  /** State of the connection, shared between msg RX thread and main thread */
-  volatile app_state_t app_state;
 
   u8 *app_name;
 
@@ -348,14 +341,23 @@ typedef struct vppcom_main_t_
 
   fifo_segment_main_t segment_main;
 
+  vcl_rpc_fn_t *wrk_rpc_fn;
+
+  /*
+   * Binary api context
+   */
+
+  /* State of the connection, shared between msg RX thread and main thread */
+  volatile vcl_bapi_app_state_t bapi_app_state;
+
+  /* VNET_API_ERROR_FOO -> "Foo" hash table */
+  uword *error_string_by_error_number;
+
 #ifdef VCL_ELOG
   /* VPP Event-logger */
   elog_main_t elog_main;
   elog_track_t elog_track;
 #endif
-
-  /* VNET_API_ERROR_FOO -> "Foo" hash table */
-  uword *error_string_by_error_number;
 
 } vppcom_main_t;
 
@@ -392,6 +394,13 @@ vcl_session_get (vcl_worker_t * wrk, u32 session_index)
   if (pool_is_free_index (wrk->sessions, session_index))
     return 0;
   return pool_elt_at_index (wrk->sessions, session_index);
+}
+
+static inline vcl_session_handle_t
+vcl_session_handle_from_wrk_session_index (u32 session_index, u32 wrk_index)
+{
+  ASSERT (session_index < 2 << 24);
+  return (wrk_index << 24 | session_index);
 }
 
 static inline vcl_session_handle_t
@@ -485,18 +494,18 @@ vcl_session_is_connectable_listener (vcl_worker_t * wrk,
   if (session->session_type != VPPCOM_PROTO_QUIC)
     return 0;
   if (session->listener_index == VCL_INVALID_SESSION_INDEX)
-    return !(session->session_state & STATE_LISTEN);
+    return !(session->session_state == VCL_STATE_LISTEN);
   ls = vcl_session_get_w_handle (wrk, session->listener_index);
   if (!ls)
     return VPPCOM_EBADFD;
-  return ls->session_state & STATE_LISTEN;
+  return ls->session_state == VCL_STATE_LISTEN;
 }
 
 static inline vcl_session_t *
 vcl_session_table_lookup_listener (vcl_worker_t * wrk, u64 handle)
 {
   uword *p;
-  vcl_session_t *session;
+  vcl_session_t *s;
 
   p = hash_get (wrk->session_index_by_vpp_handles, handle);
   if (!p)
@@ -505,16 +514,17 @@ vcl_session_table_lookup_listener (vcl_worker_t * wrk, u64 handle)
 	    " %llx", handle);
       return 0;
     }
-  session = vcl_session_get (wrk, p[0]);
-  if (!session)
+  s = vcl_session_get (wrk, p[0]);
+  if (!s)
     {
       VDBG (1, "invalid listen session index (%u)", p[0]);
       return 0;
     }
 
-  ASSERT ((session->session_state & (STATE_LISTEN | STATE_LISTEN_NO_MQ)) ||
-	  vcl_session_is_connectable_listener (wrk, session));
-  return session;
+  ASSERT (s->session_state == VCL_STATE_LISTEN
+	  || s->session_state == VCL_STATE_LISTEN_NO_MQ
+	  || vcl_session_is_connectable_listener (wrk, s));
+  return s;
 }
 
 const char *vppcom_session_state_str (vcl_session_state_t state);
@@ -529,36 +539,48 @@ static inline u8
 vcl_session_is_cl (vcl_session_t * s)
 {
   if (s->session_type == VPPCOM_PROTO_UDP)
-    return 1;
+    return !(s->flags & VCL_SESSION_F_CONNECTED);
   return 0;
+}
+
+static inline u8
+vcl_session_is_ready (vcl_session_t * s)
+{
+  return (s->session_state == VCL_STATE_READY
+	  || s->session_state == VCL_STATE_VPP_CLOSING);
 }
 
 static inline u8
 vcl_session_is_open (vcl_session_t * s)
 {
-  return ((s->session_state & STATE_OPEN)
-	  || (s->session_state == STATE_LISTEN
-	      && s->session_type == VPPCOM_PROTO_UDP));
+  return ((vcl_session_is_ready (s))
+	  || (s->session_state == VCL_STATE_LISTEN && vcl_session_is_cl (s)));
 }
 
 static inline u8
 vcl_session_is_closing (vcl_session_t * s)
 {
-  return (s->session_state == STATE_VPP_CLOSING
-	  || s->session_state == STATE_DISCONNECT);
+  return (s->session_state == VCL_STATE_VPP_CLOSING
+	  || s->session_state == VCL_STATE_DISCONNECT);
+}
+
+static inline u8
+vcl_session_is_closed (vcl_session_t * s)
+{
+  return (!s || (s->session_state == VCL_STATE_CLOSED));
 }
 
 static inline int
 vcl_session_closing_error (vcl_session_t * s)
 {
   /* Return 0 on closing sockets */
-  return s->session_state == STATE_DISCONNECT ? VPPCOM_ECONNRESET : 0;
+  return s->session_state == VCL_STATE_DISCONNECT ? VPPCOM_ECONNRESET : 0;
 }
 
 static inline int
 vcl_session_closed_error (vcl_session_t * s)
 {
-  return s->session_state == STATE_DISCONNECT
+  return s->session_state == VCL_STATE_DISCONNECT
     ? VPPCOM_ECONNRESET : VPPCOM_ENOTCONN;
 }
 
@@ -581,10 +603,33 @@ vcl_ip_copy_to_ep (ip46_address_t * ip, vppcom_endpt_t * ep, u8 is_ip4)
     clib_memcpy_fast (ep->ip, &ip->ip6, sizeof (ip6_address_t));
 }
 
+static inline int
+vcl_proto_is_dgram (uint8_t proto)
+{
+  return proto == VPPCOM_PROTO_UDP;
+}
+
+static inline u8
+vcl_session_has_attr (vcl_session_t * s, u8 attr)
+{
+  return (s->attributes & (1 << attr)) ? 1 : 0;
+}
+
+static inline void
+vcl_session_set_attr (vcl_session_t * s, u8 attr)
+{
+  s->attributes |= 1 << attr;
+}
+
+static inline void
+vcl_session_clear_attr (vcl_session_t * s, u8 attr)
+{
+  s->attributes &= ~(1 << attr);
+}
+
 /*
  * Helpers
  */
-int vcl_wait_for_app_state_change (app_state_t app_state);
 vcl_mq_evt_conn_t *vcl_mq_evt_conn_alloc (vcl_worker_t * wrk);
 u32 vcl_mq_evt_conn_index (vcl_worker_t * wrk, vcl_mq_evt_conn_t * mqc);
 vcl_mq_evt_conn_t *vcl_mq_evt_conn_get (vcl_worker_t * wrk, u32 mq_conn_idx);
@@ -594,11 +639,9 @@ int vcl_mq_epoll_del_evfd (vcl_worker_t * wrk, u32 mqc_index);
 vcl_worker_t *vcl_worker_alloc_and_init (void);
 void vcl_worker_cleanup (vcl_worker_t * wrk, u8 notify_vpp);
 int vcl_worker_register_with_vpp (void);
-int vcl_worker_set_bapi (void);
 svm_msg_q_t *vcl_worker_ctrl_mq (vcl_worker_t * wrk);
 
 void vcl_flush_mq_events (void);
-void vcl_cleanup_bapi (void);
 int vcl_session_cleanup (vcl_worker_t * wrk, vcl_session_t * session,
 			 vcl_session_handle_t sh, u8 do_disconnect);
 
@@ -641,34 +684,45 @@ vcl_session_vpp_evt_q (vcl_worker_t * wrk, vcl_session_t * s)
   return wrk->vpp_event_queues[s->vpp_thread_index];
 }
 
+static inline u64
+vcl_vpp_worker_segment_handle (u32 wrk_index)
+{
+  return (VCL_INVALID_SEGMENT_HANDLE - wrk_index - 1);
+}
+
 void vcl_send_session_worker_update (vcl_worker_t * wrk, vcl_session_t * s,
 				     u32 wrk_index);
-/*
- * VCL Binary API
- */
-int vppcom_connect_to_vpp (char *app_name);
-void vppcom_disconnect_from_vpp (void);
-void vppcom_init_error_string_table (void);
-void vppcom_send_session_enable_disable (u8 is_enable);
-void vppcom_app_send_attach (void);
-void vppcom_app_send_detach (void);
-void vcl_send_session_unlisten (vcl_worker_t * wrk, vcl_session_t * s);
-void vppcom_send_disconnect_session (u64 vpp_handle);
-void vppcom_api_hookup (void);
-void vppcom_send_application_tls_cert_add (vcl_session_t * session,
-					   char *cert, u32 cert_len);
-void vppcom_send_application_tls_key_add (vcl_session_t * session, char *key,
-					  u32 key_len);
-void vcl_send_app_worker_add_del (u8 is_add);
-void vcl_send_child_worker_del (vcl_worker_t * wrk);
+int vcl_send_worker_rpc (u32 dst_wrk_index, void *data, u32 data_len);
 
 int vcl_segment_attach (u64 segment_handle, char *name,
 			ssvm_segment_type_t type, int fd);
 void vcl_segment_detach (u64 segment_handle);
+void vcl_send_session_unlisten (vcl_worker_t * wrk, vcl_session_t * s);
 
-u32 vcl_max_nsid_len (void);
+/*
+ * VCL Binary API
+ */
+int vcl_bapi_attach (void);
+int vcl_bapi_app_worker_add (void);
+void vcl_bapi_app_worker_del (vcl_worker_t * wrk);
+void vcl_bapi_disconnect_from_vpp (void);
+int vcl_bapi_recv_fds (vcl_worker_t * wrk, int *fds, int n_fds);
+void vcl_bapi_send_application_tls_cert_add (vcl_session_t * session,
+					     char *cert, u32 cert_len);
+void vcl_bapi_send_application_tls_key_add (vcl_session_t * session,
+					    char *key, u32 key_len);
+u32 vcl_bapi_max_nsid_len (void);
+int vcl_bapi_worker_set (void);
 
-void vls_init ();
+/*
+ * VCL Socket API
+ */
+int vcl_sapi_attach (void);
+int vcl_sapi_app_worker_add (void);
+void vcl_sapi_app_worker_del (vcl_worker_t * wrk);
+void vcl_sapi_detach (vcl_worker_t * wrk);
+int vcl_sapi_recv_fds (vcl_worker_t * wrk, int *fds, int n_fds);
+
 #endif /* SRC_VCL_VCL_PRIVATE_H_ */
 
 /*

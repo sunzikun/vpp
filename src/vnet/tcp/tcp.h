@@ -28,7 +28,6 @@
 
 typedef void (timer_expiration_handler) (tcp_connection_t * tc);
 
-extern timer_expiration_handler tcp_timer_delack_handler;
 extern timer_expiration_handler tcp_timer_retransmit_handler;
 extern timer_expiration_handler tcp_timer_persist_handler;
 extern timer_expiration_handler tcp_timer_retransmit_syn_handler;
@@ -58,6 +57,7 @@ typedef struct _tcp_lookup_dispatch
   _(to_closing, u32, "timeout closing")				\
   _(tr_abort, u32, "timer retransmit abort")			\
   _(rst_unread, u32, "reset on close due to unread data")	\
+  _(no_buffer, u32, "out of buffers")				\
 
 typedef struct tcp_wrk_stats_
 {
@@ -91,7 +91,7 @@ typedef struct tcp_worker_ctx_
   /** convenience pointer to this thread's vlib main */
   vlib_main_t *vm;
 
-  /** worker time */
+  /** Time measured in @ref TCP_TSTAMP_TICK used for time stamps */
   u32 time_now;
 
   /* Max timers to be handled per dispatch loop */
@@ -163,26 +163,23 @@ typedef struct tcp_configuration_
    * a zero rwnd advertisement */
   u32 rwnd_min_update_ack;
 
-  /** Delayed ack time (disabled) */
-  u16 delack_time;
-
   /** Timer ticks to wait for close from app */
-  u16 closewait_time;
+  u32 closewait_time;
 
   /** Timer ticks to wait in time-wait. Also known as 2MSL */
-  u16 timewait_time;
+  u32 timewait_time;
 
   /** Timer ticks to wait in fin-wait1 to send fin and rcv fin-ack */
-  u16 finwait1_time;
+  u32 finwait1_time;
 
   /** Timer ticks to wait in last ack for ack */
-  u16 lastack_time;
+  u32 lastack_time;
 
   /** Timer ticks to wait in fin-wait2 for fin */
-  u16 finwait2_time;
+  u32 finwait2_time;
 
   /** Timer ticks to wait in closing for fin ack */
-  u16 closing_time;
+  u32 closing_time;
 
   /** Time to wait (sec) before cleaning up the connection */
   f32 cleanup_time;
@@ -192,6 +189,9 @@ typedef struct tcp_configuration_
 
   /** Number of preallocated half-open connections */
   u32 preallocated_half_open_connections;
+
+  /** Maxium allowed GSO packet size */
+  u32 max_gso_size;
 
   /** Vectors of src addresses. Optional unless one needs > 63K active-opens */
   ip4_address_t *ip4_src_addrs;
@@ -208,8 +208,6 @@ typedef struct _tcp_main
 
   /* Pool of listeners. */
   tcp_connection_t *listener_pool;
-
-  f64 tstamp_ticks_per_clock;
 
   /** vlib buffer size */
   u32 bytes_per_buffer;

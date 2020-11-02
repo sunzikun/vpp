@@ -94,6 +94,7 @@ typedef enum
   PPPOE_N_ERROR,
 } pppoe_input_error_t;
 
+extern char *pppoe_error_strings[];
 
 #define MTU 1500
 #define MTU_BUFFERS ((MTU + vlib_buffer_get_default_data_size(vm) - 1) / vlib_buffer_get_default_data_size(vm))
@@ -203,6 +204,8 @@ typedef struct
   u32 client_if_index;
   u32 cp_if_index;
 } vnet_pppoe_add_del_tap_args_t;
+
+int pppoe_add_del_cp (u32 cp_if_index, u8 is_add);
 
 always_inline u64
 pppoe_make_key (u8 * mac_address, u16 session_id)

@@ -1247,6 +1247,116 @@ class ARPTestCase(VppTestCase):
         static_arp.remove_vpp_config()
         self.pg2.set_table_ip4(0)
 
+    def test_arp_static_replace_dynamic_same_mac(self):
+        """ ARP Static can replace Dynamic (same mac) """
+        self.pg2.generate_remote_hosts(1)
+
+        dyn_arp = VppNeighbor(self,
+                              self.pg2.sw_if_index,
+                              self.pg2.remote_hosts[0].mac,
+                              self.pg2.remote_hosts[0].ip4)
+        static_arp = VppNeighbor(self,
+                                 self.pg2.sw_if_index,
+                                 self.pg2.remote_hosts[0].mac,
+                                 self.pg2.remote_hosts[0].ip4,
+                                 is_static=1)
+
+        #
+        # Add a dynamic ARP entry
+        #
+        dyn_arp.add_vpp_config()
+
+        #
+        # We should find the dynamic nbr
+        #
+        self.assertFalse(find_nbr(self,
+                                  self.pg2.sw_if_index,
+                                  self.pg2.remote_hosts[0].ip4,
+                                  is_static=1))
+        self.assertTrue(find_nbr(self,
+                                 self.pg2.sw_if_index,
+                                 self.pg2.remote_hosts[0].ip4,
+                                 is_static=0,
+                                 mac=self.pg2.remote_hosts[0].mac))
+
+        #
+        # Add a static ARP entry with the same mac
+        #
+        static_arp.add_vpp_config()
+
+        #
+        # We should now find the static nbr with the same mac
+        #
+        self.assertFalse(find_nbr(self,
+                                  self.pg2.sw_if_index,
+                                  self.pg2.remote_hosts[0].ip4,
+                                  is_static=0))
+        self.assertTrue(find_nbr(self,
+                                 self.pg2.sw_if_index,
+                                 self.pg2.remote_hosts[0].ip4,
+                                 is_static=1,
+                                 mac=self.pg2.remote_hosts[0].mac))
+
+        #
+        # clean-up
+        #
+        static_arp.remove_vpp_config()
+
+    def test_arp_static_replace_dynamic_diff_mac(self):
+        """ ARP Static can replace Dynamic (diff mac) """
+        self.pg2.generate_remote_hosts(2)
+
+        dyn_arp = VppNeighbor(self,
+                              self.pg2.sw_if_index,
+                              self.pg2.remote_hosts[0].mac,
+                              self.pg2.remote_hosts[0].ip4)
+        static_arp = VppNeighbor(self,
+                                 self.pg2.sw_if_index,
+                                 self.pg2.remote_hosts[1].mac,
+                                 self.pg2.remote_hosts[0].ip4,
+                                 is_static=1)
+
+        #
+        # Add a dynamic ARP entry
+        #
+        dyn_arp.add_vpp_config()
+
+        #
+        # We should find the dynamic nbr
+        #
+        self.assertFalse(find_nbr(self,
+                                  self.pg2.sw_if_index,
+                                  self.pg2.remote_hosts[0].ip4,
+                                  is_static=1))
+        self.assertTrue(find_nbr(self,
+                                 self.pg2.sw_if_index,
+                                 self.pg2.remote_hosts[0].ip4,
+                                 is_static=0,
+                                 mac=self.pg2.remote_hosts[0].mac))
+
+        #
+        # Add a static ARP entry with a changed mac
+        #
+        static_arp.add_vpp_config()
+
+        #
+        # We should now find the static nbr with a changed mac
+        #
+        self.assertFalse(find_nbr(self,
+                                  self.pg2.sw_if_index,
+                                  self.pg2.remote_hosts[0].ip4,
+                                  is_static=0))
+        self.assertTrue(find_nbr(self,
+                                 self.pg2.sw_if_index,
+                                 self.pg2.remote_hosts[0].ip4,
+                                 is_static=1,
+                                 mac=self.pg2.remote_hosts[1].mac))
+
+        #
+        # clean-up
+        #
+        static_arp.remove_vpp_config()
+
     def test_arp_incomplete(self):
         """ ARP Incomplete"""
         self.pg1.generate_remote_hosts(3)
@@ -1325,6 +1435,7 @@ class ARPTestCase(VppTestCase):
         # Generate some hosts on the LAN
         #
         self.pg1.generate_remote_hosts(4)
+        self.pg2.generate_remote_hosts(4)
 
         #
         # And an ARP entry
@@ -1415,6 +1526,36 @@ class ARPTestCase(VppTestCase):
         self.assertFalse(find_nbr(self,
                                   self.pg1.sw_if_index,
                                   self.pg1.remote_hosts[2].ip4))
+
+        #
+        # IP address in different subnets are not learnt
+        #
+        self.pg2.configure_ipv4_neighbors()
+
+        for op in ["is-at", "who-has"]:
+            p1 = [(Ether(dst="ff:ff:ff:ff:ff:ff",
+                         src=self.pg2.remote_hosts[1].mac) /
+                   ARP(op=op,
+                       hwdst=self.pg2.local_mac,
+                       hwsrc=self.pg2.remote_hosts[1].mac,
+                       pdst=self.pg2.remote_hosts[1].ip4,
+                       psrc=self.pg2.remote_hosts[1].ip4)),
+                  (Ether(dst="ff:ff:ff:ff:ff:ff",
+                         src=self.pg2.remote_hosts[1].mac) /
+                   ARP(op=op,
+                       hwdst="ff:ff:ff:ff:ff:ff",
+                       hwsrc=self.pg2.remote_hosts[1].mac,
+                       pdst=self.pg2.remote_hosts[1].ip4,
+                       psrc=self.pg2.remote_hosts[1].ip4))]
+
+            self.send_and_assert_no_replies(self.pg1, p1)
+            self.assertFalse(find_nbr(self,
+                                      self.pg1.sw_if_index,
+                                      self.pg2.remote_hosts[1].ip4))
+
+        # they are all dropped because the subnet's don't match
+        self.assertEqual(4, self.statistics.get_err_counter(
+            "/err/arp-reply/IP4 destination address not local to subnet"))
 
     def test_arp_incomplete(self):
         """ Incomplete Entries """

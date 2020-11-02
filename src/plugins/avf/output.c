@@ -257,8 +257,8 @@ avf_tx_enqueue (vlib_main_t * vm, vlib_node_runtime_t * node, avf_txq_t * txq,
       d[0].qword[1] |= AVF_TXD_CMD_RS;
     }
 
-  CLIB_MEMORY_BARRIER ();
-  *(txq->qtx_tail) = txq->next = next & mask;
+  txq->next = next & mask;
+  clib_atomic_store_rel_n (txq->qtx_tail, txq->next);
   txq->n_enqueued += n_desc;
   return n_packets - n_packets_left;
 }
@@ -267,9 +267,8 @@ VNET_DEVICE_CLASS_TX_FN (avf_device_class) (vlib_main_t * vm,
 					    vlib_node_runtime_t * node,
 					    vlib_frame_t * frame)
 {
-  avf_main_t *am = &avf_main;
   vnet_interface_output_runtime_t *rd = (void *) node->runtime_data;
-  avf_device_t *ad = pool_elt_at_index (am->devices, rd->dev_instance);
+  avf_device_t *ad = avf_get_device (rd->dev_instance);
   u32 thread_index = vm->thread_index;
   u8 qid = thread_index;
   avf_txq_t *txq = vec_elt_at_index (ad->txqs, qid % ad->num_queue_pairs);

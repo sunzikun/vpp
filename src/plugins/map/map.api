@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-option version = "4.1.1";
+option version = "4.2.1";
 
 import "vnet/ip/ip_types.api";
 import "vnet/interface_types.api";
@@ -91,8 +91,28 @@ autoreply define map_add_del_rule
 /** \brief Get list of map domains
     @param client_index - opaque cookie to identify the sender
 */
+service {
+  rpc map_domains_get returns map_domains_get_reply
+    stream map_domain_details;
+};
+
+define map_domains_get
+{
+  u32 client_index;
+  u32 context;
+  u32 cursor;
+};
+
+define map_domains_get_reply
+{
+  u32 context;
+  i32 retval;
+  u32 cursor;
+};
+
 define map_domain_dump
 {
+  option deprecated;
   u32 client_index;
   u32 context;
 };
@@ -142,7 +162,7 @@ define map_rule_details
 /** \brief Enable or disable a MAP interface
     @param client_index - opaque cookie to identify the sender
     @param context - sender context, to match reply w/ request
-    @param sw_if_index - 
+    @param sw_if_index -
     @param is_enable - 0=disable, 1=enable interface
     @param is_translation -  0=encapsulation, 1=translation
 */
@@ -328,4 +348,118 @@ define map_param_get_reply
   bool sec_check_fragments;
   bool tc_copy;
   u8 tc_class;
+};
+
+/*
+ * MAP Error counters/messages
+ */
+counters map {
+  none {
+    severity info;
+    type counter64;
+    units "packets";
+    description "valid MAP packets";
+  };
+  bad_protocol {
+    severity error;
+    type counter64;
+    units "packets";
+    description "bad protocol";
+  };
+  sec_check {
+    severity error;
+    type counter64;
+    units "packets";
+    description "security check failed";
+  };
+  encap_sec_check {
+    severity error;
+    type counter64;
+    units "packets";
+    description "encap security check failed";
+  };
+  decap_sec_check {
+    severity error;
+    type counter64;
+    units "packets";
+    description "decap security check failed";
+  };
+  icmp {
+    severity error;
+    type counter64;
+    units "packets";
+    description "unable to translate ICMP";
+  };
+  icmp_relay {
+    severity error;
+    type counter64;
+    units "packets";
+    description "unable to relay ICMP";
+  };
+  unknown {
+    severity error;
+    type counter64;
+    units "packets";
+    description "unknown";
+  };
+  no_binding {
+    severity error;
+    type counter64;
+    units "packets";
+    description "no binding";
+  };
+  no_domain {
+    severity error;
+    type counter64;
+    units "packets";
+    description "no domain";
+  };
+  fragmented {
+    severity error;
+    type counter64;
+    units "packets";
+    description "packet is a fragment";
+  };
+  fragment_memory {
+    severity error;
+    type counter64;
+    units "packets";
+    description "could not cache fragment";
+  };
+  fragment_malformed {
+    severity error;
+    type counter64;
+    units "packets";
+    description "fragment has unexpected format";
+  };
+  fragment_dropped {
+    severity error;
+    type counter64;
+    units "packets";
+    description "dropped cached fragment";
+  };
+  malformed {
+    severity error;
+    type counter64;
+    units "packets";
+    description "malformed packet";
+  };
+  df_set {
+    severity error;
+    type counter64;
+    units "packets";
+    description "can't fragment, DF set";
+  };
+  time_exceeded {
+    severity error;
+    type counter64;
+    units "packets";
+    description "time exceeded";
+  };
+};
+paths {
+  "/err/ip4-map" "map";
+  "/err/ip6-map" "map";
+  "/err/ip4-t-map" "map";
+  "/err/ip6-t-map" "map";
 };
